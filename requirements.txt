@@ -1,0 +1,26 @@
+# Core packages
+numpy
+pandas
+
+# Machine Learning & Deep Learning
+scikit-learn
+nltk
+torch
+transformers
+
+# Financial Data API
+yfinance
+
+# Data Visualization
+matplotlib
+seaborn
+
+# UI / Demo Applications
+streamlit
+gradio
+
+# Utilities
+pyyaml
+python-dotenv
+tqdm
+ipykernel

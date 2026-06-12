@@ -1,0 +1,28 @@
+# Configuration settings for Financial Sentiment Analysis
+
+data:
+  raw_path: "data/raw/"
+  processed_path: "data/processed/"
+  external_path: "data/external/"
+  ticker_symbols: ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"]
+  train_split: 0.8
+  random_seed: 42
+
+models:
+  baseline:
+    tfidf_max_features: 5000
+    svm_kernel: "linear"
+    naive_bayes_alpha: 1.0
+    save_path: "models/baseline/"
+  
+  finbert:
+    pretrained_model: "yiyanghkust/finbert-tone"
+    max_length: 128
+    batch_size: 16
+    epochs: 3
+    learning_rate: 2.0e-5
+    save_path: "models/finbert_finetuned/"
+
+evaluation:
+  metrics_path: "evaluation/metrics.json"
+  figures_path: "evaluation/figures/"
