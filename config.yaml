@@ -4,6 +4,7 @@ data:
   raw_path: "data/raw/"
   processed_path: "data/processed/"
   external_path: "data/external/"
+  phrasebank_path: "data/raw/PhraseBank/data.csv"
   ticker_symbols: ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"]
   train_split: 0.8
   random_seed: 42
@@ -25,4 +26,6 @@ models:
 
 evaluation:
   metrics_path: "evaluation/metrics.json"
+  metrics_module1_path: "evaluation/metrics_module1.json"
+  metrics_module2_path: "evaluation/metrics_module2.json"
   figures_path: "evaluation/figures/"
