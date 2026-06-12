@@ -13,6 +13,8 @@ The project is divided into 4 main phases:
 4. **Deployment (Demo)**
 
 ## 3. Project Structure
+
+```text
 financial-sentiment-analysis/
 │
 ├── data/
@@ -48,6 +50,7 @@ financial-sentiment-analysis/
 ├── .gitignore
 ├── requirements.txt
 └── README.md
+```
 
 ---
 
