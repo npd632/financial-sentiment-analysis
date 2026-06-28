@@ -9,7 +9,7 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from data_loader import download_prices
+from data_loader import download_prices, load_prices
 from preprocess import clean_text, load_config
 
 logging.basicConfig(
@@ -19,7 +19,100 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 NEWS_OUTPUT_COLS = ["headline", "stock", "date", "cleaned_text"]
+ALIGNED_OUTPUT_COLS = [
+    "headline",
+    "stock",
+    "news_datetime",
+    "trading_date",
+    "daily_return",
+    "price_direction",
+    "cleaned_text",
+]
 CHUNK_SIZE = 500_000
+EASTERN = "America/New_York"
+
+
+def to_trading_date(news_ts: pd.Timestamp) -> pd.Timestamp:
+    """
+    Convert a news timestamp to the NYSE trading date (US/Eastern calendar date).
+
+    Saturday and Sunday map to the following Monday.
+    """
+    eastern = news_ts.tz_convert(EASTERN)
+    trading_date = eastern.normalize()
+
+    weekday = eastern.weekday()
+    if weekday == 5:
+        trading_date += pd.Timedelta(days=2)
+    elif weekday == 6:
+        trading_date += pd.Timedelta(days=1)
+
+    return trading_date.tz_localize(None)
+
+
+def align_news_with_prices(
+    news_path: str,
+    prices_path: str,
+    output_path: str,
+) -> pd.DataFrame:
+    """
+    Join news headlines with daily prices and assign Up/Down labels (README 4.4).
+    """
+    if not os.path.exists(news_path):
+        raise FileNotFoundError(f"News subset not found: {news_path}")
+    if not os.path.exists(prices_path):
+        raise FileNotFoundError(f"Price cache not found: {prices_path}")
+
+    logger.info("Aligning news from %s with prices from %s", news_path, prices_path)
+
+    news = pd.read_csv(news_path)
+    initial_rows = len(news)
+    news["news_datetime"] = pd.to_datetime(news["date"], utc=True)
+    news["trading_date"] = news["news_datetime"].apply(to_trading_date)
+
+    prices = load_prices(prices_path)
+    prices["date"] = pd.to_datetime(prices["date"]).dt.normalize()
+
+    merged = news.merge(
+        prices,
+        left_on=["stock", "trading_date"],
+        right_on=["stock", "date"],
+        how="inner",
+    )
+    missing_price = initial_rows - len(merged)
+    if missing_price:
+        logger.info("Dropped %d rows with missing price data", missing_price)
+
+    merged["daily_return"] = (merged["Close"] - merged["Open"]) / merged["Open"]
+
+    before_zero = len(merged)
+    merged = merged[merged["daily_return"] != 0].copy()
+    zero_return = before_zero - len(merged)
+    if zero_return:
+        logger.info("Dropped %d rows with zero daily return", zero_return)
+
+    merged["price_direction"] = merged["daily_return"].apply(
+        lambda r: "Up" if r > 0 else "Down"
+    )
+    merged["trading_date"] = merged["trading_date"].dt.strftime("%Y-%m-%d")
+    merged["news_datetime"] = merged["news_datetime"].dt.strftime(
+        "%Y-%m-%dT%H:%M:%S%z"
+    )
+
+    output = merged[ALIGNED_OUTPUT_COLS]
+
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    output.to_csv(output_path, index=False)
+    logger.info(
+        "Saved %d aligned rows to %s (from %d news rows)",
+        len(output),
+        output_path,
+        initial_rows,
+    )
+    return output
 
 
 def build_news_subset(
@@ -110,6 +203,12 @@ def main(config_path: str = "config.yaml") -> None:
         start_date=data_cfg["price_start_date"],
         end_date=data_cfg["price_end_date"],
         output_path=data_cfg["prices_daily_path"],
+    )
+
+    align_news_with_prices(
+        news_path=data_cfg["news_subset_path"],
+        prices_path=data_cfg["prices_daily_path"],
+        output_path=data_cfg["aligned_news_prices_path"],
     )
 
 
