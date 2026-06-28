@@ -5,7 +5,32 @@ data:
   processed_path: "data/processed/"
   external_path: "data/external/"
   phrasebank_path: "data/raw/PhraseBank/data.csv"
-  ticker_symbols: ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"]
+  phrasebank_clean_path: "data/processed/phrasebank_clean.csv"
+  news_path: "data/raw/DailyFinancialNews/analyst_ratings_processed.csv"
+  news_start_date: "2018-01-01"
+  news_tickers:
+    - MRK
+    - MS
+    - MU
+    - NVDA
+    - QQQ
+    - M
+    - EBAY
+    - NFLX
+    - GILD
+    - VZ
+    - DAL
+    - JNJ
+    - QCOM
+    - BABA
+    - KO
+    - ORCL
+    - FDX
+    - HD
+    - WFC
+    - BBRY
+  price_start_date: "2018-01-01"
+  price_end_date: "2020-06-11"
   train_split: 0.8
   random_seed: 42
 
@@ -15,7 +40,7 @@ models:
     svm_kernel: "linear"
     naive_bayes_alpha: 1.0
     save_path: "models/baseline/"
-  
+
   finbert:
     pretrained_model: "yiyanghkust/finbert-tone"
     max_length: 128
@@ -28,4 +53,5 @@ evaluation:
   metrics_path: "evaluation/metrics.json"
   metrics_module1_path: "evaluation/metrics_module1.json"
   metrics_module2_path: "evaluation/metrics_module2.json"
+  metrics_module3_path: "evaluation/metrics_module3.json"
   figures_path: "evaluation/figures/"

@@ -30,7 +30,3 @@ models/finbert_finetuned/*
 evaluation/figures/*
 !evaluation/figures/.gitkeep
 
-# IDEs
-.vscode/
-.idea/
-.DS_Store
