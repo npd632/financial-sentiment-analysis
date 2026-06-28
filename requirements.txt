@@ -9,3 +9,5 @@ accelerate
 sentencepiece
 matplotlib
 seaborn
+streamlit
+joblib

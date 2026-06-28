@@ -26,6 +26,8 @@ models/baseline/*
 !models/baseline/.gitkeep
 models/finbert_finetuned/*
 !models/finbert_finetuned/.gitkeep
+models/price_direction/*
+!models/price_direction/.gitkeep
 
 evaluation/figures/*
 !evaluation/figures/.gitkeep

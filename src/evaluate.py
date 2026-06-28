@@ -5,6 +5,7 @@ import argparse
 import json
 import logging
 import os
+import joblib
 import pickle
 import sys
 
@@ -12,18 +13,21 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import torch
+from sklearn.calibration import calibration_curve
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
+    brier_score_loss,
     confusion_matrix,
     matthews_corrcoef,
     precision_recall_fscore_support,
 )
 from sklearn.model_selection import train_test_split
-from transformers import BertForSequenceClassification, BertTokenizer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from finbert_inference import predict_finbert, predict_finbert_with_probs
+from train_price_model import prepare_matrices, temporal_split
 from preprocess import load_config
 
 logging.basicConfig(
@@ -37,8 +41,7 @@ LABEL_COL = "Sentiment"
 SENTIMENT_LABELS = ["negative", "neutral", "positive"]
 LABEL2ID = {"neutral": 0, "positive": 1, "negative": 2}
 ID2LABEL = {0: "neutral", 1: "positive", 2: "negative"}
-SENTIMENT_TO_DIRECTION = {"positive": "Up", "negative": "Down"}
-DIRECTION_LABELS = ["Up", "Down"]
+DIRECTION_LABELS = ["Down", "Up"]
 
 
 def load_phrasebank_test_split(config: dict) -> tuple[pd.Series, pd.Series]:
@@ -199,66 +202,7 @@ def evaluate_baselines(
     return metrics
 
 
-def predict_finbert_with_probs(
-    texts: list[str],
-    model_dir: str,
-    max_length: int,
-    batch_size: int,
-) -> pd.DataFrame:
-    """Run batched FinBERT inference; return labels and class probabilities."""
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    tokenizer = BertTokenizer.from_pretrained(model_dir)
-    model = BertForSequenceClassification.from_pretrained(model_dir)
-    model.to(device)
-    model.eval()
-
-    predicted_sentiment: list[str] = []
-    prob_neutral: list[float] = []
-    prob_positive: list[float] = []
-    prob_negative: list[float] = []
-
-    with torch.no_grad():
-        for start in range(0, len(texts), batch_size):
-            batch = texts[start : start + batch_size]
-            encodings = tokenizer(
-                batch,
-                truncation=True,
-                padding=True,
-                max_length=max_length,
-                return_tensors="pt",
-            )
-            encodings = {key: val.to(device) for key, val in encodings.items()}
-            logits = model(**encodings).logits
-            probs = torch.softmax(logits, dim=-1).cpu().numpy()
-            pred_ids = probs.argmax(axis=-1)
-
-            for pred_id, row_probs in zip(pred_ids, probs):
-                predicted_sentiment.append(ID2LABEL[int(pred_id)])
-                prob_neutral.append(float(row_probs[0]))
-                prob_positive.append(float(row_probs[1]))
-                prob_negative.append(float(row_probs[2]))
-
-    return pd.DataFrame(
-        {
-            "predicted_sentiment": predicted_sentiment,
-            "prob_neutral": prob_neutral,
-            "prob_positive": prob_positive,
-            "prob_negative": prob_negative,
-        }
-    )
-
-
-def predict_finbert(
-    texts: list[str],
-    model_dir: str,
-    max_length: int,
-    batch_size: int,
-) -> list[str]:
-    """Run batched FinBERT inference and return sentiment label strings."""
-    results = predict_finbert_with_probs(texts, model_dir, max_length, batch_size)
-    return results["predicted_sentiment"].tolist()
-
-
+from finbert_inference import predict_finbert, predict_finbert_with_probs
 def evaluate_finbert(
     config: dict,
     x_test: pd.Series,
@@ -342,29 +286,50 @@ def evaluate_sentiment(config: dict) -> None:
     logger.info("Best model (macro F1): %s", merged["best_model"])
 
 
-def compute_directional_metrics(
-    df: pd.DataFrame,
-) -> dict:
-    """Compute agreement rate, confusion matrix, and MCC for Up/Down rows."""
-    directional = df[df["predicted_sentiment"] != "neutral"].copy()
-    directional["predicted_direction"] = directional["predicted_sentiment"].map(
-        SENTIMENT_TO_DIRECTION
+def transform_with_pipeline(
+    pipeline: dict,
+    x_tab: np.ndarray,
+    x_cls: np.ndarray,
+) -> np.ndarray:
+    """Apply fitted scalers and PCA to feature blocks."""
+    x_tab_s = pipeline["scaler_tabular"].transform(x_tab)
+    x_cls_p = pipeline["pca"].transform(x_cls)
+    x_cls_s = pipeline["scaler_cls"].transform(x_cls_p)
+    return np.hstack([x_tab_s, x_cls_s])
+
+
+def direction_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_prob_up: np.ndarray) -> dict:
+    """Compute classification and calibration metrics for Up=1 encoding."""
+    prec, rec, f1, support = precision_recall_fscore_support(
+        y_true, y_pred, labels=[0, 1], average=None, zero_division=0
     )
-
-    y_true = (directional["price_direction"] == "Up").astype(int)
-    y_pred = (directional["predicted_direction"] == "Up").astype(int)
-
-    agreement = float((directional["predicted_direction"] == directional["price_direction"]).mean())
-    cm = confusion_matrix(
-        directional["price_direction"],
-        directional["predicted_direction"],
-        labels=DIRECTION_LABELS,
-    )
-
+    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+    correct = y_pred == y_true
     return {
-        "directional_sample_size": int(len(directional)),
-        "directional_agreement_rate": agreement,
+        "accuracy": float(accuracy_score(y_true, y_pred)),
         "matthews_correlation_coefficient": float(matthews_corrcoef(y_true, y_pred)),
+        "brier_score": float(brier_score_loss(y_true, y_prob_up)),
+        "mean_confidence": float(np.maximum(y_prob_up, 1 - y_prob_up).mean()),
+        "mean_confidence_correct": float(np.maximum(y_prob_up, 1 - y_prob_up)[correct].mean())
+        if correct.any()
+        else None,
+        "mean_confidence_incorrect": float(np.maximum(y_prob_up, 1 - y_prob_up)[~correct].mean())
+        if (~correct).any()
+        else None,
+        "per_class": {
+            "Down": {
+                "precision": float(prec[0]),
+                "recall": float(rec[0]),
+                "f1_score": float(f1[0]),
+                "support": int(support[0]),
+            },
+            "Up": {
+                "precision": float(prec[1]),
+                "recall": float(rec[1]),
+                "f1_score": float(f1[1]),
+                "support": int(support[1]),
+            },
+        },
         "confusion_matrix": {
             "labels": DIRECTION_LABELS,
             "matrix": cm.tolist(),
@@ -372,146 +337,120 @@ def compute_directional_metrics(
     }
 
 
-def plot_direction_heatmap(
-    df: pd.DataFrame,
+def plot_calibration_curve(
+    y_true: np.ndarray,
+    y_prob_up: np.ndarray,
     output_path: str,
 ) -> None:
-    """Save heatmap of predicted vs actual price direction (non-neutral only)."""
-    directional = df[df["predicted_sentiment"] != "neutral"].copy()
-    directional["predicted_direction"] = directional["predicted_sentiment"].map(
-        SENTIMENT_TO_DIRECTION
-    )
-
-    cm = confusion_matrix(
-        directional["price_direction"],
-        directional["predicted_direction"],
-        labels=DIRECTION_LABELS,
-    )
-
+    """Save reliability diagram for P(Up)."""
+    prob_true, prob_pred = calibration_curve(y_true, y_prob_up, n_bins=10, strategy="uniform")
     fig, ax = plt.subplots(figsize=(6, 5))
-    sns.heatmap(
-        cm,
-        annot=True,
-        fmt="d",
-        cmap="YlOrRd",
-        xticklabels=DIRECTION_LABELS,
-        yticklabels=DIRECTION_LABELS,
-        ax=ax,
-    )
-    ax.set_xlabel("Predicted direction (from sentiment)")
-    ax.set_ylabel("Actual price direction")
-    ax.set_title("Sentiment vs Price Direction (non-neutral predictions)")
+    ax.plot(prob_pred, prob_true, marker="o", label="Model")
+    ax.plot([0, 1], [0, 1], linestyle="--", color="gray", label="Perfect calibration")
+    ax.set_xlabel("Mean predicted P(Up)")
+    ax.set_ylabel("Fraction of Up outcomes")
+    ax.set_title("Price Direction Calibration Curve (test set)")
+    ax.legend()
     fig.tight_layout()
-
-    output_dir = os.path.dirname(output_path)
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
-    logger.info("Saved direction heatmap to %s", output_path)
+    logger.info("Saved calibration curve to %s", output_path)
 
 
 def evaluate_market(config: dict) -> None:
-    """Phase 4: measure alignment between FinBERT sentiment and same-day price direction."""
+    """Phase 4: evaluate Stage 2 calibrated price-direction model on temporal test set."""
     data_cfg = config["data"]
-    finbert_cfg = config["models"]["finbert"]
+    price_cfg = config["models"]["price_direction"]
     eval_cfg = config["evaluation"]
 
-    news_path = data_cfg["news_subset_path"]
-    aligned_path = data_cfg["aligned_news_prices_path"]
-    model_dir = finbert_cfg["save_path"]
+    dataset_path = data_cfg["price_model_dataset_path"]
+    pipeline_path = os.path.join(price_cfg["save_path"], "pipeline.pkl")
 
-    for path in (news_path, aligned_path):
+    for path in (dataset_path, pipeline_path):
         if not os.path.exists(path):
-            raise FileNotFoundError(f"Required data file not found: {path}")
+            raise FileNotFoundError(
+                f"Required artifact not found: {path}. "
+                "Run build_price_dataset.py and train_price_model.py first."
+            )
 
-    if not os.path.exists(os.path.join(model_dir, "config.json")):
-        raise FileNotFoundError(
-            f"FinBERT model not found in {model_dir}. "
-            "Run `python src/train_finbert.py` first."
-        )
-
-    logger.info("Loading news subset from %s", news_path)
-    news = pd.read_csv(news_path)
-    logger.info("Running FinBERT inference on %d headlines...", len(news))
-
-    predictions = predict_finbert_with_probs(
-        list(news["cleaned_text"]),
-        model_dir=model_dir,
-        max_length=finbert_cfg["max_length"],
-        batch_size=finbert_cfg["batch_size"],
+    df = pd.read_parquet(dataset_path)
+    train_df, test_df = temporal_split(
+        df,
+        train_end=data_cfg["price_train_end_date"],
+        test_start=data_cfg["price_test_start_date"],
     )
-    news = pd.concat([news.reset_index(drop=True), predictions], axis=1)
+    logger.info("Evaluating on temporal test set: %d rows (2020+)", len(test_df))
 
-    logger.info("Loading aligned news/prices from %s", aligned_path)
-    aligned = pd.read_csv(aligned_path)
+    pipeline = joblib.load(pipeline_path)
+    x_tab_test, x_cls_test, y_test = prepare_matrices(test_df)
+    x_test = transform_with_pipeline(pipeline, x_tab_test, x_cls_test)
 
-    merged = aligned.merge(
-        news[
-            [
-                "headline",
-                "stock",
-                "date",
-                "predicted_sentiment",
-                "prob_negative",
-                "prob_neutral",
-                "prob_positive",
-            ]
-        ],
-        left_on=["headline", "stock", "news_datetime"],
-        right_on=["headline", "stock", "date"],
-        how="inner",
-    )
-    logger.info("Merged %d rows with price data and sentiment predictions", len(merged))
+    calibrator = pipeline["calibrator"]
+    y_pred = calibrator.predict(x_test)
+    y_prob_up = calibrator.predict_proba(x_test)[:, 1]
 
-    neutral_count = int((merged["predicted_sentiment"] == "neutral").sum())
-    overall = compute_directional_metrics(merged)
+    stage2 = direction_metrics(y_test, y_pred, y_prob_up)
 
-    merged["year"] = pd.to_datetime(merged["trading_date"]).dt.year
-    breakdown_by_year = {}
-    for year in (2018, 2019, 2020):
-        year_df = merged[merged["year"] == year]
-        if year_df.empty:
-            breakdown_by_year[str(year)] = {
-                "directional_sample_size": 0,
-                "directional_agreement_rate": None,
-                "matthews_correlation_coefficient": None,
-            }
-            continue
-        year_metrics = compute_directional_metrics(year_df)
-        breakdown_by_year[str(year)] = {
-            "directional_sample_size": year_metrics["directional_sample_size"],
-            "directional_agreement_rate": year_metrics["directional_agreement_rate"],
-            "matthews_correlation_coefficient": year_metrics[
-                "matthews_correlation_coefficient"
-            ],
-        }
+    # Baselines on test set
+    y_pred_always_up = np.ones_like(y_test)
+    y_prob_always_up = np.ones_like(y_test, dtype=float)
+    always_up = direction_metrics(y_test, y_pred_always_up, y_prob_always_up)
+
+    momentum_pred = (test_df["stock_return_1d"].values > 0).astype(int)
+    momentum_prob = momentum_pred.astype(float)
+    momentum = direction_metrics(y_test, momentum_pred, momentum_prob)
+
+    x_tab_train, _, y_train = prepare_matrices(train_df)
+    sentiment_train = x_tab_train[:, :3]
+    sentiment_test = x_tab_test[:, :3]
+    sent_model = LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42)
+    sent_model.fit(sentiment_train, y_train)
+    sent_pred = sent_model.predict(sentiment_test)
+    sent_prob_up = sent_model.predict_proba(sentiment_test)[:, 1]
+    sentiment_only = direction_metrics(y_test, sent_pred, sent_prob_up)
 
     metrics = {
-        "total_news_rows": int(len(news)),
-        "aligned_rows": int(len(aligned)),
-        "merged_rows": int(len(merged)),
-        "neutral_predictions_excluded": neutral_count,
-        **overall,
-        "breakdown_by_year": breakdown_by_year,
+        "test_sample_size": int(len(test_df)),
+        "train_sample_size": int(len(train_df)),
+        "temporal_split": {
+            "train_end": data_cfg["price_train_end_date"],
+            "test_start": data_cfg["price_test_start_date"],
+        },
+        "stage2_calibrated_fusion": stage2,
+        "baselines": {
+            "always_up": always_up,
+            "momentum": momentum,
+            "sentiment_only": sentiment_only,
+        },
         "limitation": (
-            "Measures same-day open-to-close co-movement between headline sentiment "
-            "and price direction; does not establish causal impact of news on prices."
+            "Predicts next-day close vs event-day close direction using headline text, "
+            "FinBERT outputs, and same-day market context. Correlational, not causal."
         ),
     }
 
     write_json(eval_cfg["metrics_module3_path"], metrics)
-    plot_direction_heatmap(
-        merged,
-        os.path.join(eval_cfg["figures_path"], "sentiment_vs_price.png"),
+
+    y_pred_labels = np.where(y_pred == 1, "Up", "Down")
+    y_true_labels = np.where(y_test == 1, "Up", "Down")
+    plot_confusion_matrix(
+        y_true_labels,
+        y_pred_labels,
+        ["Down", "Up"],
+        os.path.join(eval_cfg["figures_path"], "confusion_matrix_price_model.png"),
+        title="Stage 2 Price Direction — Confusion Matrix (2020 test)",
+    )
+    plot_calibration_curve(
+        y_test,
+        y_prob_up,
+        os.path.join(eval_cfg["figures_path"], "calibration_curve.png"),
     )
 
     logger.info(
-        "Directional agreement: %.4f (n=%d, neutral excluded=%d, MCC=%.4f)",
-        overall["directional_agreement_rate"],
-        overall["directional_sample_size"],
-        neutral_count,
-        overall["matthews_correlation_coefficient"],
+        "Stage 2 test accuracy: %.4f, MCC: %.4f, Brier: %.4f",
+        stage2["accuracy"],
+        stage2["matthews_correlation_coefficient"],
+        stage2["brier_score"],
     )
 
 

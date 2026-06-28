@@ -117,6 +117,50 @@ def load_prices(path: str) -> pd.DataFrame:
     return pd.read_parquet(path)
 
 
+def download_spy(
+    start_date: str,
+    end_date: str,
+    output_path: str,
+) -> pd.DataFrame:
+    """Download SPY daily OHLCV for market-context features."""
+    end_exclusive = (datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)).strftime(
+        "%Y-%m-%d"
+    )
+    logger.info("Downloading SPY prices (%s to %s)", start_date, end_date)
+
+    history = yf.Ticker("SPY").history(
+        start=start_date,
+        end=end_exclusive,
+        auto_adjust=False,
+    )
+    if history.empty:
+        raise RuntimeError("SPY price download returned no data.")
+
+    df = history.reset_index()
+    if "Date" in df.columns:
+        df = df.rename(columns={"Date": "date"})
+    elif "Datetime" in df.columns:
+        df = df.rename(columns={"Datetime": "date"})
+
+    df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_convert(None).dt.normalize()
+    df = df[["date", *PRICE_COLS]].sort_values("date")
+
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    df.to_parquet(output_path, index=False)
+    logger.info("Saved %d SPY rows to %s", len(df), output_path)
+    return df
+
+
+def load_spy(path: str) -> pd.DataFrame:
+    """Load cached SPY daily prices."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"SPY cache not found: {path}")
+    return pd.read_parquet(path)
+
+
 def main(config_path: str = "config.yaml") -> None:
     import sys
 
