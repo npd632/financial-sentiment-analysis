@@ -52,8 +52,8 @@ flowchart LR
   end
   subgraph phase2 [Phase2_Modeling]
     CleanPB --> FinBERT[FinBERT_sentiment]
-    PriceDS --> Embed[CLS_embeddings]
-    FinBERT --> Embed
+    FinBERT --> Embed[CLS_embeddings]
+    PriceDS --> Embed
     Embed --> Stage2[LogReg_calibrated]
   end
   subgraph phase3 [Phase3_SentimentEval]
@@ -420,23 +420,6 @@ These cases show that **sentiment ≠ next-day price**. Macro or mismatched head
 
 Compare **D1 vs D2** side-by-side: same story, different wording.
 
-#### Suggested 5-minute demo flow
-
-1. **A1** — Stage 1 strong positive
-2. **A4** — Stage 1 strong negative
-3. **A7** — neutral detection
-4. **C1** — negative sentiment + sidebar Down ground truth, but Stage 2 still ~51% Up with warning
-5. **D1 vs D2** — phrasing matters for sentiment
-6. **B3 (KO)** — optional: Stage 2 picks Down (still low confidence)
-
-#### Checklist
-
-- [ ] Stage 1 label matches expected for A1–A7
-- [ ] Stage 2 confidence is almost always < 55% → warning appears
-- [ ] C1 sidebar shows actual Down despite Stage 2 saying Up
-- [ ] D1 is neutral, D2 is positive (same theme, different style)
-- [ ] Stage 2 is not treated as “almost certain” on bullish headlines
-
 ---
 
 ## 9. Configuration (`config.yaml`)
@@ -480,7 +463,7 @@ evaluation:
 
 ---
 
-## 10. Tech Stack and Setup
+## 10. Requirements and Setup
 
 ### Requirements
 
