@@ -9,6 +9,7 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from data_loader import download_prices
 from preprocess import clean_text, load_config
 
 logging.basicConfig(
@@ -102,6 +103,13 @@ def main(config_path: str = "config.yaml") -> None:
         output_path=data_cfg["news_subset_path"],
         tickers=data_cfg["news_tickers"],
         start_date=data_cfg["news_start_date"],
+    )
+
+    download_prices(
+        tickers=data_cfg["news_tickers"],
+        start_date=data_cfg["price_start_date"],
+        end_date=data_cfg["price_end_date"],
+        output_path=data_cfg["prices_daily_path"],
     )
 
 
