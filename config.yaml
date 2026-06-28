@@ -7,6 +7,7 @@ data:
   phrasebank_path: "data/raw/PhraseBank/data.csv"
   phrasebank_clean_path: "data/processed/phrasebank_clean.csv"
   news_path: "data/raw/DailyFinancialNews/analyst_ratings_processed.csv"
+  news_subset_path: "data/processed/news_subset.csv"
   news_start_date: "2018-01-01"
   news_tickers:
     - MRK
