@@ -11,7 +11,6 @@ data:
   aligned_news_prices_path: "data/processed/aligned_news_prices.csv"
   prices_daily_path: "data/external/prices_daily.parquet"
   spy_prices_path: "data/external/spy_prices.parquet"
-  price_model_dataset_path: "data/processed/price_model_dataset.parquet"
   news_start_date: "2018-01-01"
   news_tickers:
     - MRK
@@ -36,24 +35,19 @@ data:
   price_start_date: "2018-01-01"
   price_end_date: "2020-06-11"
   spy_end_date: "2020-06-12"
-  forward_flat_threshold: 0.001
-  forward_label_mode: "raw_1d"
-  company_filter_enabled: false
   ticker_aliases_path: "config/ticker_aliases.yaml"
-  price_train_end_date: "2019-12-31"
   price_test_start_date: "2020-01-01"
   validation_start_date: "2019-10-01"
-  train_end_date_v2: "2019-09-30"
+  train_end_date: "2019-09-30"
   large_move_threshold: 0.005
   train_split: 0.8
   random_seed: 42
 
-  # v2 pipeline paths
-  forward_flat_threshold_v2: 0.003
-  forward_label_mode_v2: "excess_1d"
-  company_filter_enabled_v2: true
-  price_model_dataset_phrasebank_path: "data/processed/price_model_dataset_v2_phrasebank.parquet"
-  price_model_dataset_news_path: "data/processed/price_model_dataset_v2_news.parquet"
+  forward_flat_threshold: 0.003
+  forward_label_mode: "excess_1d"
+  company_filter_enabled: true
+  price_model_dataset_phrasebank_path: "data/processed/price_model_dataset_phrasebank.parquet"
+  price_model_dataset_news_path: "data/processed/price_model_dataset_news.parquet"
 
 models:
   baseline:
@@ -70,14 +64,6 @@ models:
     learning_rate: 2.0e-5
     save_path: "models/finbert_finetuned/"
 
-  price_direction:
-    save_path: "models/price_direction/"
-    pca_components: 32
-    logistic_c: 1.0
-    calibration_method: "isotonic"
-    calibration_cv: 3
-    confidence_threshold: 0.55
-
   finbert_news:
     init_checkpoint: "models/finbert_finetuned/"
     save_path: "models/finbert_news_adapted/"
@@ -88,8 +74,8 @@ models:
     direction_loss_weight: 1.0
     sentiment_distill_weight: 0.5
 
-  price_direction_v2:
-    save_path: "models/price_direction_v2/"
+  price_direction:
+    save_path: "models/price_direction/"
     estimator: "lightgbm"
     pca_components: 64
     calibration_method: "isotonic"
@@ -105,5 +91,4 @@ evaluation:
   metrics_module1_path: "evaluation/metrics_module1.json"
   metrics_module2_path: "evaluation/metrics_module2.json"
   metrics_module3_path: "evaluation/metrics_module3.json"
-  metrics_module3_v2_path: "evaluation/metrics_module3_v2.json"
   figures_path: "evaluation/figures/"

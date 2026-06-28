@@ -21,6 +21,7 @@ from transformers import (
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from preprocess import load_config
+from finbert_inference import ID2LABEL, LABEL2ID
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,8 +31,6 @@ logger = logging.getLogger(__name__)
 
 TEXT_COL = "cleaned_text"
 LABEL_COL = "Sentiment"
-LABEL2ID = {"neutral": 0, "positive": 1, "negative": 2}
-ID2LABEL = {0: "neutral", 1: "positive", 2: "negative"}
 
 
 class SentimentDataset(torch.utils.data.Dataset):

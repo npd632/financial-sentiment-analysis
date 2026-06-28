@@ -27,15 +27,13 @@ from sklearn.model_selection import train_test_split
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from finbert_inference import predict_finbert, predict_finbert_with_probs
+from price_constants import ABLATION_CONFIGS
 from price_model_utils import (
-    find_optimal_threshold,
     predict_with_threshold,
     prepare_matrices,
     temporal_split,
-    temporal_split_v2,
-    transform_with_pipeline_v2,
+    transform_with_pipeline,
 )
-from train_price_model import prepare_matrices_v1
 from preprocess import load_config
 
 logging.basicConfig(
@@ -47,8 +45,6 @@ logger = logging.getLogger(__name__)
 TEXT_COL = "cleaned_text"
 LABEL_COL = "Sentiment"
 SENTIMENT_LABELS = ["negative", "neutral", "positive"]
-LABEL2ID = {"neutral": 0, "positive": 1, "negative": 2}
-ID2LABEL = {0: "neutral", 1: "positive", 2: "negative"}
 DIRECTION_LABELS = ["Down", "Up"]
 
 
@@ -210,7 +206,6 @@ def evaluate_baselines(
     return metrics
 
 
-from finbert_inference import predict_finbert, predict_finbert_with_probs
 def evaluate_finbert(
     config: dict,
     x_test: pd.Series,
@@ -294,18 +289,6 @@ def evaluate_sentiment(config: dict) -> None:
     logger.info("Best model (macro F1): %s", merged["best_model"])
 
 
-def transform_with_pipeline(
-    pipeline: dict,
-    x_tab: np.ndarray,
-    x_cls: np.ndarray,
-) -> np.ndarray:
-    """Apply fitted scalers and PCA to feature blocks."""
-    x_tab_s = pipeline["scaler_tabular"].transform(x_tab)
-    x_cls_p = pipeline["pca"].transform(x_cls)
-    x_cls_s = pipeline["scaler_cls"].transform(x_cls_p)
-    return np.hstack([x_tab_s, x_cls_s])
-
-
 def direction_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_prob_up: np.ndarray) -> dict:
     """Compute classification and calibration metrics for Up=1 encoding."""
     prec, rec, f1, support = precision_recall_fscore_support(
@@ -366,102 +349,6 @@ def plot_calibration_curve(
     logger.info("Saved calibration curve to %s", output_path)
 
 
-def evaluate_market(config: dict) -> None:
-    """Phase 4: evaluate Stage 2 calibrated price-direction model on temporal test set."""
-    data_cfg = config["data"]
-    price_cfg = config["models"]["price_direction"]
-    eval_cfg = config["evaluation"]
-
-    dataset_path = data_cfg["price_model_dataset_path"]
-    pipeline_path = os.path.join(price_cfg["save_path"], "pipeline.pkl")
-
-    for path in (dataset_path, pipeline_path):
-        if not os.path.exists(path):
-            raise FileNotFoundError(
-                f"Required artifact not found: {path}. "
-                "Run build_price_dataset.py and train_price_model.py first."
-            )
-
-    df = pd.read_parquet(dataset_path)
-    train_df, test_df = temporal_split(
-        df,
-        train_end=data_cfg["price_train_end_date"],
-        test_start=data_cfg["price_test_start_date"],
-    )
-    logger.info("Evaluating on temporal test set: %d rows (2020+)", len(test_df))
-
-    pipeline = joblib.load(pipeline_path)
-    x_tab_test, x_cls_test, y_test = prepare_matrices_v1(test_df)
-    x_test = transform_with_pipeline(pipeline, x_tab_test, x_cls_test)
-
-    calibrator = pipeline["calibrator"]
-    y_pred = calibrator.predict(x_test)
-    y_prob_up = calibrator.predict_proba(x_test)[:, 1]
-
-    stage2 = direction_metrics(y_test, y_pred, y_prob_up)
-
-    # Baselines on test set
-    y_pred_always_up = np.ones_like(y_test)
-    y_prob_always_up = np.ones_like(y_test, dtype=float)
-    always_up = direction_metrics(y_test, y_pred_always_up, y_prob_always_up)
-
-    momentum_pred = (test_df["stock_return_1d"].values > 0).astype(int)
-    momentum_prob = momentum_pred.astype(float)
-    momentum = direction_metrics(y_test, momentum_pred, momentum_prob)
-
-    x_tab_train, _, y_train = prepare_matrices_v1(train_df)
-    sentiment_train = x_tab_train[:, :3]
-    sentiment_test = x_tab_test[:, :3]
-    sent_model = LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42)
-    sent_model.fit(sentiment_train, y_train)
-    sent_pred = sent_model.predict(sentiment_test)
-    sent_prob_up = sent_model.predict_proba(sentiment_test)[:, 1]
-    sentiment_only = direction_metrics(y_test, sent_pred, sent_prob_up)
-
-    metrics = {
-        "test_sample_size": int(len(test_df)),
-        "train_sample_size": int(len(train_df)),
-        "temporal_split": {
-            "train_end": data_cfg["price_train_end_date"],
-            "test_start": data_cfg["price_test_start_date"],
-        },
-        "stage2_calibrated_fusion": stage2,
-        "baselines": {
-            "always_up": always_up,
-            "momentum": momentum,
-            "sentiment_only": sentiment_only,
-        },
-        "limitation": (
-            "Predicts next-day close vs event-day close direction using headline text, "
-            "FinBERT outputs, and same-day market context. Correlational, not causal."
-        ),
-    }
-
-    write_json(eval_cfg["metrics_module3_path"], metrics)
-
-    y_pred_labels = np.where(y_pred == 1, "Up", "Down")
-    y_true_labels = np.where(y_test == 1, "Up", "Down")
-    plot_confusion_matrix(
-        y_true_labels,
-        y_pred_labels,
-        ["Down", "Up"],
-        os.path.join(eval_cfg["figures_path"], "confusion_matrix_price_model.png"),
-        title="Stage 2 Price Direction — Confusion Matrix (2020 test)",
-    )
-    plot_calibration_curve(
-        y_test,
-        y_prob_up,
-        os.path.join(eval_cfg["figures_path"], "calibration_curve.png"),
-    )
-
-    logger.info(
-        "Stage 2 test accuracy: %.4f, MCC: %.4f, Brier: %.4f",
-        stage2["accuracy"],
-        stage2["matthews_correlation_coefficient"],
-        stage2["brier_score"],
-    )
-
-
 def _evaluate_on_subset(
     test_df: pd.DataFrame,
     pipeline: dict,
@@ -472,24 +359,24 @@ def _evaluate_on_subset(
         return None
     sub = test_df[mask]
     x_tab, x_cls, y_true = prepare_matrices(sub, ablation=pipeline["ablation"])
-    x = transform_with_pipeline_v2(pipeline, x_tab, x_cls)
+    x = transform_with_pipeline(pipeline, x_tab, x_cls)
     y_prob = pipeline["calibrator"].predict_proba(x)[:, 1]
     threshold = pipeline.get("optimal_threshold", 0.5)
     y_pred = predict_with_threshold(y_prob, threshold)
     return direction_metrics(y_true, y_pred, y_prob)
 
 
-def evaluate_market_v2(config: dict) -> None:
-    """Phase 4 v2: excess-return target, dual FinBERT, ablation comparison."""
+def evaluate_market(config: dict) -> None:
+    """Phase 4: excess-return target, dual FinBERT, ablation comparison."""
     data_cfg = config["data"]
-    price_cfg = config["models"]["price_direction_v2"]
+    price_cfg = config["models"]["price_direction"]
     eval_cfg = config["evaluation"]
     save_root = price_cfg["save_path"]
     best_path = os.path.join(save_root, "best_model.json")
 
     if not os.path.exists(best_path):
         raise FileNotFoundError(
-            f"best_model.json not found at {best_path}. Run train_price_model.py --version v2 first."
+            f"best_model.json not found at {best_path}. Run train_price_model.py first."
         )
 
     with open(best_path, encoding="utf-8") as f:
@@ -508,22 +395,22 @@ def evaluate_market_v2(config: dict) -> None:
 
     for variant, ds_path in dataset_paths.items():
         df = pd.read_parquet(ds_path)
-        _, _, test_df = temporal_split_v2(
+        _, _, test_df = temporal_split(
             df,
-            train_end=data_cfg["train_end_date_v2"],
+            train_end=data_cfg["train_end_date"],
             val_start=data_cfg["validation_start_date"],
             test_start=data_cfg["price_test_start_date"],
         )
 
         variant_dir = save_root
-        for ablation in ["sentiment_only", "market_only", "sentiment_market", "full_fusion"]:
+        for ablation in ABLATION_CONFIGS:
             model_id = f"{variant}_{ablation}"
             pipe_path = os.path.join(variant_dir, model_id, "pipeline.pkl")
             if not os.path.exists(pipe_path):
                 continue
             pipeline = joblib.load(pipe_path)
             x_tab, x_cls, y_test = prepare_matrices(test_df, ablation=ablation)
-            x_test = transform_with_pipeline_v2(pipeline, x_tab, x_cls)
+            x_test = transform_with_pipeline(pipeline, x_tab, x_cls)
             y_prob = pipeline["calibrator"].predict_proba(x_test)[:, 1]
             threshold = pipeline.get("optimal_threshold", 0.5)
             y_pred = predict_with_threshold(y_prob, threshold)
@@ -542,7 +429,7 @@ def evaluate_market_v2(config: dict) -> None:
     x_tab, x_cls, y_test = prepare_matrices(
         best_test_df, ablation=best_pipeline["ablation"]
     )
-    x_test = transform_with_pipeline_v2(best_pipeline, x_tab, x_cls)
+    x_test = transform_with_pipeline(best_pipeline, x_tab, x_cls)
     y_prob = best_pipeline["calibrator"].predict_proba(x_test)[:, 1]
     threshold = best_pipeline["optimal_threshold"]
 
@@ -559,9 +446,9 @@ def evaluate_market_v2(config: dict) -> None:
     )
 
     train_full = pd.read_parquet(dataset_paths[best_info["finbert_variant"]])
-    train_only, _, _ = temporal_split_v2(
+    train_only, _, _ = temporal_split(
         train_full,
-        train_end=data_cfg["train_end_date_v2"],
+        train_end=data_cfg["train_end_date"],
         val_start=data_cfg["validation_start_date"],
         test_start=data_cfg["price_test_start_date"],
     )
@@ -591,7 +478,6 @@ def evaluate_market_v2(config: dict) -> None:
             subset_metrics[name] = result
 
     metrics = {
-        "version": "v2",
         "label_mode": "excess_1d",
         "test_sample_size": int(len(best_test_df)),
         "best_model": best_info,
@@ -611,7 +497,7 @@ def evaluate_market_v2(config: dict) -> None:
         ),
     }
 
-    write_json(eval_cfg["metrics_module3_v2_path"], metrics)
+    write_json(eval_cfg["metrics_module3_path"], metrics)
 
     y_true_labels = np.where(y_test == 1, "Up", "Down")
     y_pred_labels = np.where(y_pred_optimal == 1, "Up", "Down")
@@ -620,13 +506,13 @@ def evaluate_market_v2(config: dict) -> None:
         y_true_labels,
         y_pred_labels,
         ["Down", "Up"],
-        os.path.join(figures, "confusion_matrix_price_model_v2.png"),
-        title="Stage 2 v2 Excess Return — Confusion Matrix (2020 test)",
+        os.path.join(figures, "confusion_matrix_price_model.png"),
+        title="Stage 2 Excess Return — Confusion Matrix (2020 test)",
     )
     plot_calibration_curve(
         y_test,
         y_prob,
-        os.path.join(figures, "calibration_curve_v2.png"),
+        os.path.join(figures, "calibration_curve.png"),
     )
 
     if ablation_mcc:
@@ -635,13 +521,13 @@ def evaluate_market_v2(config: dict) -> None:
         values = [ablation_mcc[n] for n in names]
         ax.barh(names, values)
         ax.set_xlabel("MCC (2020 test)")
-        ax.set_title("v2 Ablation Comparison")
+        ax.set_title("Ablation Comparison")
         fig.tight_layout()
         fig.savefig(os.path.join(figures, "ablation_comparison.png"), dpi=150)
         plt.close(fig)
 
     logger.info(
-        "v2 best (%s) test MCC: %.4f, accuracy: %.4f",
+        "best (%s) test MCC: %.4f, accuracy: %.4f",
         best_info["model_id"],
         metrics["stage2_best_optimal_threshold"]["matthews_correlation_coefficient"],
         metrics["stage2_best_optimal_threshold"]["accuracy"],
@@ -661,20 +547,12 @@ def main() -> None:
         default="config.yaml",
         help="Path to config YAML (default: config.yaml)",
     )
-    parser.add_argument(
-        "--version",
-        choices=["v1", "v2"],
-        default="v1",
-        help="Market evaluation version (v2: excess return + dual FinBERT)",
-    )
     args = parser.parse_args()
 
     config = load_config(args.config)
 
     if args.module == "sentiment":
         evaluate_sentiment(config)
-    elif args.version == "v2":
-        evaluate_market_v2(config)
     else:
         evaluate_market(config)
 

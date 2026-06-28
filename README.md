@@ -7,9 +7,9 @@ This project is a **two-stage financial NLP + ML system**:
 1. **Stage 1 (sentiment):** Classify headline tone (positive / negative / neutral) using FinBERT fine-tuned on PhraseBank.
 2. **Stage 2 (price direction):** Predict **most likely next-day excess return vs SPY** (Up/Down) with **calibrated probabilities**, using Stage 1 outputs plus market context features.
 
-**Research question (v2):** Given a **company-relevant** headline, ticker, and event-day market state, can we predict whether the stock's **next-day return will beat SPY** — and how confident should we be?
+**Research question:** Given a **company-relevant** headline, ticker, and event-day market state, can we predict whether the stock's **next-day return will beat SPY** — and how confident should we be?
 
-The advanced sentiment model is **FinBERT** (`yiyanghkust/finbert-tone`), fine-tuned on PhraseBank. **v2** adds a **news-adapted FinBERT** (`models/finbert_news_adapted/`) and Stage 2 **LightGBM** with ablation search and MCC-optimal threshold.
+The advanced sentiment model is **FinBERT** (`yiyanghkust/finbert-tone`), fine-tuned on PhraseBank. A **news-adapted FinBERT** (`models/finbert_news_adapted/`) and Stage 2 **LightGBM** with ablation search and MCC-optimal threshold complete the pipeline.
 
 Two local datasets serve distinct roles:
 
@@ -26,10 +26,10 @@ The pipeline runs in **5 phases**:
 
 | Phase | Name | Primary outputs |
 |-------|------|-----------------|
-| 1 | Data pipeline | `phrasebank_clean.csv`, `news_subset.csv`, `prices_daily.parquet`, `spy_prices.parquet`, `aligned_news_prices.csv`, **`price_model_dataset.parquet`** |
-| 2 | Modeling | `models/baseline/*`, `models/finbert_finetuned/`, **`models/price_direction/`** |
+| 1 | Data pipeline | `phrasebank_clean.csv`, `news_subset.csv`, `prices_daily.parquet`, `spy_prices.parquet`, `aligned_news_prices.csv`, **`price_model_dataset_*.parquet`** |
+| 2 | Modeling | `models/baseline/*`, `models/finbert_finetuned/`, `models/finbert_news_adapted/`, **`models/price_direction/`** |
 | 3 | Sentiment evaluation | `metrics_module1.json`, `metrics_module2.json`, confusion matrices |
-| 4 | **Price direction evaluation** | `metrics_module3.json`, `confusion_matrix_price_model.png`, `calibration_curve.png` |
+| 4 | **Price direction evaluation** | `metrics_module3.json`, confusion matrix, calibration curve, ablation plot |
 | 5 | Deployment | Streamlit demo: sentiment + **next-day direction + confidence** |
 
 ```mermaid
@@ -94,24 +94,26 @@ financial-sentiment-analysis/
 │   ├── preprocess.py           # PhraseBank cleaning
 │   ├── align_market.py         # news filtering, same-day price alignment
 │   ├── build_price_dataset.py  # forward labels, features, FinBERT probs + CLS
-│   ├── headline_filter.py      # company-relevance filter (v2)
+│   ├── headline_filter.py      # company-relevance filter
 │   ├── price_features.py       # shared market feature computation
-│   ├── price_model_utils.py    # v2 splits, ablations, threshold tuning
+│   ├── price_model_utils.py    # temporal splits, ablations, threshold tuning
 │   ├── finbert_inference.py    # shared FinBERT inference helpers
 │   ├── price_constants.py      # Stage 2 feature column definitions
 │   ├── train_baseline.py       # TF-IDF + Naive Bayes + SVM
 │   ├── train_finbert.py        # FinBERT fine-tuning (Stage 1A)
 │   ├── train_finbert_news.py   # news multi-task FinBERT (Stage 1B)
-│   ├── train_price_model.py    # Stage 2 v1 LogReg / v2 LightGBM
+│   ├── train_price_model.py    # Stage 2 LightGBM ablations
 │   ├── inference.py            # Stage 1 + Stage 2 demo inference
 │   └── evaluate.py             # sentiment and price-direction metrics
 │
 ├── models/
 │   ├── baseline/
 │   ├── finbert_finetuned/
+│   ├── finbert_finetuned/
+│   ├── finbert_news_adapted/
 │   └── price_direction/
-│       ├── pipeline.pkl
-│       └── feature_columns.json
+│       ├── best_model.json
+│       └── {variant}_{ablation}/pipeline.pkl
 │
 ├── evaluation/
 │   ├── metrics_module1.json
@@ -233,11 +235,11 @@ For each row with event trading date `t` and ticker `stock`:
 
 **Output:** `data/processed/price_model_dataset.parquet` (~16k rows after filtering)
 
-### 4.7 Pipeline v2 extensions
+### 4.7 Excess-return pipeline extensions
 
 **Company filter:** [`src/headline_filter.py`](src/headline_filter.py) keeps headlines mentioning the ticker or alias from [`config/ticker_aliases.yaml`](config/ticker_aliases.yaml) (~47% of aligned rows retained).
 
-**Primary label (v2):** `excess_forward_return = stock_forward_return - spy_forward_return`; flat band **0.3%** on `|excess|`.
+**Primary label:** `excess_forward_return = stock_forward_return - spy_forward_return`; flat band **0.3%** on `|excess|`.
 
 **Expanded features:** `stock_excess_return_1d/5d`, `realized_vol_20d`, `intraday_return`, `gap_return`.
 
@@ -245,10 +247,10 @@ For each row with event trading date `t` and ticker `stock`:
 
 | Variant | FinBERT checkpoint | Output |
 |---------|------------------|--------|
-| phrasebank | `models/finbert_finetuned/` | `price_model_dataset_v2_phrasebank.parquet` |
-| news | `models/finbert_news_adapted/` | `price_model_dataset_v2_news.parquet` |
+| phrasebank | `models/finbert_finetuned/` | `price_model_dataset_phrasebank.parquet` |
+| news | `models/finbert_news_adapted/` | `price_model_dataset_news.parquet` |
 
-Build: `python src/build_price_dataset.py --version v2 --finbert-variant {phrasebank|news}` (~6.3k rows each after filter).
+Build: `python src/build_price_dataset.py --finbert-variant {phrasebank|news}` (~6.3k rows each after filter).
 
 ---
 
@@ -282,44 +284,9 @@ Build: `python src/build_price_dataset.py --version v2 --finbert-variant {phrase
 
 **Saved artifacts:** `models/finbert_finetuned/` (model weights + tokenizer)
 
-### 5.3 Stage 2 — Price direction model (`src/train_price_model.py`)
+### 5.3 Stage 2 — LightGBM ablations (`src/train_price_model.py`)
 
-**Input:** `data/processed/price_model_dataset.parquet`
-
-**Temporal split (fixed):**
-
-| Set | `trading_date` range |
-|-----|----------------------|
-| Train | 2018-01-01 – 2019-12-31 |
-| Test | 2020-01-01 – 2020-06-11 |
-
-**Feature matrix (41 features):**
-
-1. Stage 1 probs (3)
-2. Tabular market features (6)
-3. PCA-reduced CLS embedding (32)
-
-**Base estimator:** `LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42)`
-
-**Calibration:** `CalibratedClassifierCV(estimator, method="isotonic", cv=3)` fit on **train only**
-
-**Saved artifacts:**
-
-- `models/price_direction/pipeline.pkl` — `StandardScaler` (tabular + PCA features) + `PCA(32)` + calibrator
-- `models/price_direction/feature_columns.json` — column metadata
-
-Training does **not** retrain FinBERT — Stage 1 is frozen; only Stage 2 weights are learned.
-
-### 5.4 Stage 1B — News-adapted FinBERT (`src/train_finbert_news.py`)
-
-Multi-task fine-tune from PhraseBank checkpoint on filtered news (train ≤ 2019):
-
-- **Direction loss:** excess Up/Down (weight 1.0)
-- **Sentiment distillation:** KL to PhraseBank teacher probs (weight 0.5)
-
-Exports 3-class sentiment checkpoint to `models/finbert_news_adapted/`.
-
-### 5.5 Stage 2 v2 — LightGBM ablations (`src/train_price_model.py --version v2`)
+**Input:** `price_model_dataset_{phrasebank,news}.parquet`
 
 **Temporal split:**
 
@@ -335,9 +302,20 @@ Exports 3-class sentiment checkpoint to `models/finbert_news_adapted/`.
 
 **Threshold:** MCC-optimal on validation (saved in `pipeline.pkl`).
 
-**Artifacts:** `models/price_direction_v2/{variant}_{ablation}/` + `best_model.json`
+**Artifacts:** `models/price_direction/{variant}_{ablation}/` + `best_model.json`
 
-**Reference result:** Best val MCC **0.137** (`news_full_fusion`); 2020 test MCC remains weak (~−0.06) due to regime shift — see `metrics_module3_v2.json` subset metrics.
+**Reference result:** Best val MCC **0.137** (`news_full_fusion`); 2020 test MCC remains weak (~−0.06) due to regime shift — see `metrics_module3.json` subset metrics.
+
+Training does **not** retrain FinBERT — Stage 1 is frozen; only Stage 2 weights are learned.
+
+### 5.4 Stage 1B — News-adapted FinBERT (`src/train_finbert_news.py`)
+
+Multi-task fine-tune from PhraseBank checkpoint on filtered news (train ≤ 2019):
+
+- **Direction loss:** excess Up/Down (weight 1.0)
+- **Sentiment distillation:** KL to PhraseBank teacher probs (weight 0.5)
+
+Exports 3-class sentiment checkpoint to `models/finbert_news_adapted/`.
 
 ---
 
@@ -359,13 +337,7 @@ FinBERT is the Stage 1 production model for both the demo and the price pipeline
 
 ---
 
-## 7. Phase 4 — Price Direction Evaluation
-
-### v1 (`python src/evaluate.py --module market`)
-
-See `evaluation/metrics_module3.json` — raw next-day return direction.
-
-### v2 (`python src/evaluate.py --module market --version v2`)
+## 7. Phase 4 — Price Direction Evaluation (`src/evaluate.py --module market`)
 
 **Target:** excess return vs SPY on **company-filtered** headlines (2020 test, ~1.4k rows).
 
@@ -373,9 +345,9 @@ See `evaluation/metrics_module3.json` — raw next-day return direction.
 
 **Outputs:**
 
-- `evaluation/metrics_module3_v2.json`
-- `evaluation/figures/confusion_matrix_price_model_v2.png`
-- `evaluation/figures/calibration_curve_v2.png`
+- `evaluation/metrics_module3.json`
+- `evaluation/figures/confusion_matrix_price_model.png`
+- `evaluation/figures/calibration_curve.png`
 - `evaluation/figures/ablation_comparison.png`
 
 ### Limitations
@@ -390,7 +362,7 @@ See `evaluation/metrics_module3.json` — raw next-day return direction.
 
 **Framework:** Streamlit
 
-**Models loaded:** FinBERT (Stage 1) + v2 best LightGBM pipeline from `models/price_direction_v2/best_model.json`
+**Models loaded:** FinBERT (Stage 1) + best LightGBM pipeline from `models/price_direction/best_model.json`
 
 **UI workflow:**
 
@@ -399,7 +371,7 @@ See `evaluation/metrics_module3.json` — raw next-day return direction.
 3. **Stage 1:** sentiment label + probability bars
 4. **Stage 2:** predicted **excess return direction vs SPY** (`Up`/`Down`), `P(Up)`, `P(Down)`, confidence
 5. Low-confidence warning if confidence < 0.55
-6. Sidebar: excess return ground truth from v2 phrasebank dataset when available
+6. Sidebar: excess return ground truth from phrasebank dataset when available
 
 **Run:**
 
@@ -407,9 +379,9 @@ See `evaluation/metrics_module3.json` — raw next-day return direction.
 streamlit run app/app.py
 ```
 
-### Demo test cases (v2 pipeline)
+### Demo test cases
 
-Use these with the Streamlit demo after v2 retrain. Set **ticker** and **date** in the sidebar, paste the headline, click **Analyze**. Sidebar ground truth comes from `price_model_dataset_v2_phrasebank.parquet` (excess return vs SPY).
+Use these with the Streamlit demo after a full retrain. Set **ticker** and **date** in the sidebar, paste the headline, click **Analyze**. Sidebar ground truth comes from `price_model_dataset_phrasebank.parquet` (excess return vs SPY).
 
 **v2 notes:**
 - Stage 2 predicts **excess return vs SPY** (beat market / underperform), not raw price direction.
@@ -483,29 +455,24 @@ data:
   aligned_news_prices_path: "data/processed/aligned_news_prices.csv"
   prices_daily_path: "data/external/prices_daily.parquet"
   spy_prices_path: "data/external/spy_prices.parquet"
-  price_model_dataset_path: "data/processed/price_model_dataset.parquet"
-  news_start_date: "2018-01-01"
-  news_tickers: [MRK, MS, MU, NVDA, QQQ, M, EBAY, NFLX, GILD, VZ, DAL, JNJ, QCOM, BABA, KO, ORCL, FDX, HD, WFC]
-  price_start_date: "2018-01-01"
-  price_end_date: "2020-06-11"
-  spy_end_date: "2020-06-12"
-  forward_flat_threshold: 0.001
-  price_train_end_date: "2019-12-31"
+  price_model_dataset_phrasebank_path: "data/processed/price_model_dataset_phrasebank.parquet"
+  price_model_dataset_news_path: "data/processed/price_model_dataset_news.parquet"
+  forward_flat_threshold: 0.003
+  forward_label_mode: "excess_1d"
+  company_filter_enabled: true
+  train_end_date: "2019-09-30"
+  validation_start_date: "2019-10-01"
   price_test_start_date: "2020-01-01"
   random_seed: 42
 
 models:
   finbert:
-    pretrained_model: "yiyanghkust/finbert-tone"
-    max_length: 128
-    batch_size: 16
     save_path: "models/finbert_finetuned/"
+  finbert_news:
+    save_path: "models/finbert_news_adapted/"
   price_direction:
     save_path: "models/price_direction/"
-    pca_components: 32
-    logistic_c: 1.0
-    calibration_method: "isotonic"
-    calibration_cv: 3
+    pca_components: 64
     confidence_threshold: 0.55
 
 evaluation:
@@ -551,36 +518,23 @@ Run scripts from the project root in this order:
 # Phase 1 — Data pipeline
 python src/preprocess.py
 python src/align_market.py
-python src/build_price_dataset.py
+python src/train_finbert.py                     # Stage 1A (skip if checkpoint exists)
+python src/train_finbert_news.py              # Stage 1B
+python src/build_price_dataset.py --finbert-variant phrasebank
+python src/build_price_dataset.py --finbert-variant news
 
 # Phase 2 — Modeling
-python src/train_baseline.py        # optional for Phase 3 comparison
-python src/train_finbert.py         # Stage 1 (required)
-python src/train_price_model.py     # Stage 2
+python src/train_baseline.py                  # optional for Phase 3 comparison
+python src/train_price_model.py               # Stage 2 LightGBM ablations
 
 # Phase 3 — Sentiment evaluation
 python src/evaluate.py --module sentiment
 
 # Phase 4 — Price direction evaluation
-python src/evaluate.py --module market          # v1
-python src/evaluate.py --module market --version v2
+python src/evaluate.py --module market
 
 # Phase 5 — Demo
 streamlit run app/app.py
 ```
 
-### v2 full retrain (recommended)
-
-```bash
-python src/preprocess.py
-python src/align_market.py
-python src/train_finbert.py                     # Stage 1A (skip if checkpoint exists)
-python src/train_finbert_news.py              # Stage 1B (~30 min CPU)
-python src/build_price_dataset.py --version v2 --finbert-variant phrasebank
-python src/build_price_dataset.py --version v2 --finbert-variant news
-python src/train_price_model.py --version v2
-python src/evaluate.py --module market --version v2
-streamlit run app/app.py
-```
-
-**Note:** `build_price_dataset.py` runs FinBERT inference and CLS embedding extraction on ~16k rows; allow several minutes on CPU.
+**Note:** `build_price_dataset.py` runs FinBERT inference and CLS embedding extraction; allow several minutes on CPU.

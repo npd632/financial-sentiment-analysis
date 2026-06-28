@@ -1,4 +1,4 @@
-"""Shared utilities for Stage 2 price model training and evaluation (v2)."""
+"""Shared utilities for Stage 2 price model training and evaluation."""
 
 from __future__ import annotations
 
@@ -25,7 +25,20 @@ from price_constants import (
 logger = logging.getLogger(__name__)
 
 
-def temporal_split_v2(
+def resolve_artifact_path(path: str) -> str:
+    """Resolve a pipeline path from best_model.json (handles relative / Windows paths)."""
+    path = path.replace("\\", "/")
+    if os.path.isabs(path) and os.path.exists(path):
+        return path
+    if os.path.exists(path):
+        return path
+    alt = os.path.join(os.getcwd(), path)
+    if os.path.exists(alt):
+        return alt
+    return path
+
+
+def temporal_split(
     df: pd.DataFrame,
     train_end: str,
     val_start: str,
@@ -40,18 +53,6 @@ def temporal_split_v2(
     ]
     test = df[df["trading_date"] >= pd.Timestamp(test_start)]
     return train, val, test
-
-
-def temporal_split(
-    df: pd.DataFrame,
-    train_end: str,
-    test_start: str,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    df = df.copy()
-    df["trading_date"] = pd.to_datetime(df["trading_date"])
-    train = df[df["trading_date"] <= pd.Timestamp(train_end)]
-    test = df[df["trading_date"] >= pd.Timestamp(test_start)]
-    return train, test
 
 
 def prepare_matrices(
@@ -74,7 +75,7 @@ def prepare_matrices(
     return x_tab, x_cls, y
 
 
-def transform_with_pipeline_v2(
+def transform_with_pipeline(
     pipeline: dict,
     x_tab: np.ndarray,
     x_cls: np.ndarray | None,
@@ -114,7 +115,7 @@ def predict_with_threshold(y_prob_up: np.ndarray, threshold: float) -> np.ndarra
 def build_lgbm_calibrated(config: dict, random_seed: int):
     import lightgbm as lgb
 
-    price_cfg = config["models"]["price_direction_v2"]
+    price_cfg = config["models"]["price_direction"]
     base = lgb.LGBMClassifier(
         n_estimators=price_cfg["lgbm_n_estimators"],
         learning_rate=price_cfg["lgbm_learning_rate"],

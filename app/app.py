@@ -10,7 +10,7 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from inference import load_best_model_info, load_price_pipeline_v2, predict_price_direction
+from inference import load_best_model_info, load_price_pipeline, predict_price_direction
 from preprocess import load_config
 
 SENTIMENT_EMOJI = {"positive": "🟢", "negative": "🔴", "neutral": "⚪"}
@@ -18,7 +18,7 @@ SENTIMENT_EMOJI = {"positive": "🟢", "negative": "🔴", "neutral": "⚪"}
 
 @st.cache_resource
 def load_pipeline_cached(config_dict: dict):
-    return load_price_pipeline_v2(config_dict)
+    return load_price_pipeline(config_dict)
 
 
 @st.cache_data
@@ -52,15 +52,15 @@ def main() -> None:
 
     config = load_config(str(ROOT / "config.yaml"))
     data_cfg = config["data"]
-    price_v2_cfg = config["models"]["price_direction_v2"]
-    confidence_threshold = price_v2_cfg["confidence_threshold"]
+    price_cfg = config["models"]["price_direction"]
+    confidence_threshold = price_cfg["confidence_threshold"]
 
-    best_model_path = ROOT / price_v2_cfg["save_path"] / "best_model.json"
+    best_model_path = ROOT / price_cfg["save_path"] / "best_model.json"
     dataset_path = ROOT / data_cfg["price_model_dataset_phrasebank_path"]
 
     st.title("Financial Sentiment & Price Outlook")
     st.caption(
-        "Two-stage v2: FinBERT sentiment (Stage 1) + calibrated **next-day excess return vs SPY** "
+        "Two-stage pipeline: FinBERT sentiment (Stage 1) + calibrated **next-day excess return vs SPY** "
         "(Stage 2)."
     )
 
@@ -84,9 +84,9 @@ def main() -> None:
                     **config,
                     "models": {
                         **config["models"],
-                        "price_direction_v2": {
-                            **price_v2_cfg,
-                            "save_path": str(ROOT / price_v2_cfg["save_path"]),
+                        "price_direction": {
+                            **price_cfg,
+                            "save_path": str(ROOT / price_cfg["save_path"]),
                         },
                     },
                 }
@@ -104,9 +104,9 @@ def main() -> None:
                 st.metric("Actual excess return (next day)", f"{sample['excess_forward_return']:.4f}")
                 st.metric("Actual excess direction", sample["forward_direction"])
             else:
-                st.info("No cached rows for this ticker/date in the v2 dataset.")
+                st.info("No cached rows for this ticker/date in the price dataset.")
         else:
-            st.warning("Run v2 dataset build to enable ground-truth lookup.")
+            st.warning("Run dataset build to enable ground-truth lookup.")
 
     st.subheader("Headline analysis")
     headline = st.text_area(
@@ -122,11 +122,11 @@ def main() -> None:
 
         if not best_model_path.exists():
             st.error(
-                "v2 price model not found. Run:\n"
+                "Price model not found. Run:\n"
                 "`python src/train_finbert_news.py`\n"
-                "`python src/build_price_dataset.py --version v2 --finbert-variant phrasebank`\n"
-                "`python src/build_price_dataset.py --version v2 --finbert-variant news`\n"
-                "`python src/train_price_model.py --version v2`"
+                "`python src/build_price_dataset.py --finbert-variant phrasebank`\n"
+                "`python src/build_price_dataset.py --finbert-variant news`\n"
+                "`python src/train_price_model.py`"
             )
             return
 
@@ -147,9 +147,9 @@ def main() -> None:
                     **config["models"]["finbert_news"],
                     "save_path": str(ROOT / config["models"]["finbert_news"]["save_path"]),
                 },
-                "price_direction_v2": {
-                    **price_v2_cfg,
-                    "save_path": str(ROOT / price_v2_cfg["save_path"]),
+                "price_direction": {
+                    **price_cfg,
+                    "save_path": str(ROOT / price_cfg["save_path"]),
                 },
             },
         }
@@ -162,7 +162,6 @@ def main() -> None:
                 trading_date=trading_date,
                 config=runtime_config,
                 pipeline=pipeline,
-                use_v2=True,
             )
 
         col1, col2 = st.columns(2)

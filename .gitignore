@@ -28,11 +28,10 @@ models/finbert_finetuned/*
 !models/finbert_finetuned/.gitkeep
 models/price_direction/*
 !models/price_direction/.gitkeep
-models/price_direction_v2/*
-!models/price_direction_v2/.gitkeep
 models/finbert_news_adapted/*
 !models/finbert_news_adapted/.gitkeep
 
 evaluation/figures/*
 !evaluation/figures/.gitkeep
+evaluation/metrics*.json
 

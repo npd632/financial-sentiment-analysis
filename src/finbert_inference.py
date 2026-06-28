@@ -2,12 +2,45 @@
 
 from __future__ import annotations
 
-import torch
+import numpy as np
 import pandas as pd
+import torch
 from transformers import BertForSequenceClassification, BertTokenizer
 
 LABEL2ID = {"neutral": 0, "positive": 1, "negative": 2}
 ID2LABEL = {0: "neutral", 1: "positive", 2: "negative"}
+
+
+def extract_cls_embeddings(
+    texts: list[str],
+    model_dir: str,
+    max_length: int,
+    batch_size: int,
+) -> np.ndarray:
+    """Extract FinBERT [CLS] embeddings (768-dim) for each text."""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    tokenizer = BertTokenizer.from_pretrained(model_dir)
+    model = BertForSequenceClassification.from_pretrained(model_dir)
+    model.to(device)
+    model.eval()
+
+    embeddings: list[np.ndarray] = []
+    with torch.no_grad():
+        for start in range(0, len(texts), batch_size):
+            batch = texts[start : start + batch_size]
+            encodings = tokenizer(
+                batch,
+                truncation=True,
+                padding=True,
+                max_length=max_length,
+                return_tensors="pt",
+            )
+            encodings = {key: val.to(device) for key, val in encodings.items()}
+            outputs = model.bert(**encodings)
+            cls_batch = outputs.last_hidden_state[:, 0, :].cpu().numpy()
+            embeddings.append(cls_batch)
+
+    return np.vstack(embeddings)
 
 
 def predict_finbert_with_probs(

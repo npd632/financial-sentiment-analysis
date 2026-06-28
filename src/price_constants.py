@@ -1,15 +1,8 @@
 """Shared constants for Stage 2 price-direction modeling."""
 
-SENTIMENT_FEATURES = ["prob_negative", "prob_neutral", "prob_positive"]
+EASTERN = "America/New_York"
 
-V1_MARKET_FEATURES = [
-    "stock_return_1d",
-    "stock_return_5d",
-    "spy_return_1d",
-    "volume_zscore_20d",
-    "day_of_week",
-    "hour_of_day",
-]
+SENTIMENT_FEATURES = ["prob_negative", "prob_neutral", "prob_positive"]
 
 MARKET_FEATURES = [
     "stock_return_1d",
@@ -25,7 +18,6 @@ MARKET_FEATURES = [
     "hour_of_day",
 ]
 
-V1_TABULAR_FEATURES = SENTIMENT_FEATURES + V1_MARKET_FEATURES
 TABULAR_FEATURES = SENTIMENT_FEATURES + MARKET_FEATURES
 
 CLS_PREFIX = "cls_"

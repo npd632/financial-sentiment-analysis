@@ -24,7 +24,7 @@ from transformers import (
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from build_price_dataset import build_labeled_frame
-from finbert_inference import predict_finbert_with_probs
+from finbert_inference import ID2LABEL, LABEL2ID, predict_finbert_with_probs
 from preprocess import load_config
 
 logging.basicConfig(
@@ -32,9 +32,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-ID2LABEL = {0: "neutral", 1: "positive", 2: "negative"}
-LABEL2ID = {"neutral": 0, "positive": 1, "negative": 2}
 
 
 class BertMultiTaskForNews(BertPreTrainedModel):
@@ -171,9 +168,9 @@ def train_finbert_news(config: dict) -> None:
         )
 
     logger.info("Building labeled news frame for multi-task training...")
-    df = build_labeled_frame(config, version="v2")
+    df = build_labeled_frame(config)
     df["trading_date"] = pd.to_datetime(df["trading_date"])
-    train_end = pd.Timestamp(data_cfg["price_train_end_date"])
+    train_end = pd.Timestamp(data_cfg["train_end_date"])
     df = df[df["trading_date"] <= train_end].copy()
     logger.info("Training rows (<= %s): %d", train_end.date(), len(df))
 
