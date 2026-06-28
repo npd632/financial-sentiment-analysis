@@ -1,0 +1,43 @@
+{
+    "total_news_rows": 17292,
+    "aligned_rows": 16816,
+    "merged_rows": 16824,
+    "neutral_predictions_excluded": 5246,
+    "directional_sample_size": 11578,
+    "directional_agreement_rate": 0.5386077042667128,
+    "matthews_correlation_coefficient": 0.07526849913903107,
+    "confusion_matrix": {
+        "labels": [
+            "Up",
+            "Down"
+        ],
+        "matrix": [
+            [
+                3734,
+                2156
+            ],
+            [
+                3186,
+                2502
+            ]
+        ]
+    },
+    "breakdown_by_year": {
+        "2018": {
+            "directional_sample_size": 4206,
+            "directional_agreement_rate": 0.5240133143128863,
+            "matthews_correlation_coefficient": 0.056258764438762925
+        },
+        "2019": {
+            "directional_sample_size": 4654,
+            "directional_agreement_rate": 0.5543618392780404,
+            "matthews_correlation_coefficient": 0.09547973653618429
+        },
+        "2020": {
+            "directional_sample_size": 2718,
+            "directional_agreement_rate": 0.5342163355408388,
+            "matthews_correlation_coefficient": 0.07053060406232002
+        }
+    },
+    "limitation": "Measures same-day open-to-close co-movement between headline sentiment and price direction; does not establish causal impact of news on prices."
+}

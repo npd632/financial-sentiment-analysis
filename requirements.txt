@@ -2,3 +2,10 @@ pandas
 pyyaml
 yfinance
 pyarrow
+scikit-learn
+torch
+transformers
+accelerate
+sentencepiece
+matplotlib
+seaborn
