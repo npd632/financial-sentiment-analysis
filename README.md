@@ -5,22 +5,18 @@
 This project is a **two-stage financial NLP + ML system**:
 
 1. **Stage 1 (sentiment):** Classify headline tone (positive / negative / neutral) using FinBERT fine-tuned on PhraseBank.
-2. **Stage 2 (price direction):** Predict **most likely next-day price direction** (Up/Down) with **calibrated probabilities**, using Stage 1 outputs plus market context features.
+2. **Stage 2 (price direction):** Predict **most likely next-day excess return vs SPY** (Up/Down) with **calibrated probabilities**, using Stage 1 outputs plus market context features.
+
+**Research question (v2):** Given a **company-relevant** headline, ticker, and event-day market state, can we predict whether the stock's **next-day return will beat SPY** — and how confident should we be?
+
+The advanced sentiment model is **FinBERT** (`yiyanghkust/finbert-tone`), fine-tuned on PhraseBank. **v2** adds a **news-adapted FinBERT** (`models/finbert_news_adapted/`) and Stage 2 **LightGBM** with ablation search and MCC-optimal threshold.
 
 Two local datasets serve distinct roles:
 
 | Dataset | Path | Rows | Role |
 |---------|------|------|------|
 | Financial PhraseBank | `data/raw/PhraseBank/data.csv` | 5,842 | Supervised sentiment training and model comparison |
-| Daily Financial News (processed analyst ratings) | `data/raw/DailyFinancialNews/analyst_ratings_processed.csv` | ~1.4M | Build price-model dataset and evaluate next-day direction prediction |
-
-**Research question:** Given a headline, ticker, and event-day market state, can we predict whether the stock's **next trading day** close will be above or below the event-day close — and how confident should we be?
-
-**PhraseBank schema:** `Sentence` (text), `Sentiment` (label). Class distribution: neutral 3,130 / positive 1,852 / negative 860.
-
-**News schema:** `title` (headline), `date` (timestamp with timezone), `stock` (ticker symbol).
-
-The advanced sentiment model is **FinBERT** (`yiyanghkust/finbert-tone` on Hugging Face), fine-tuned on PhraseBank. Stage 2 is a calibrated **LogisticRegression** on tabular features (FinBERT probabilities, market context, PCA-reduced CLS embeddings).
+| Daily Financial News (processed analyst ratings) | `data/raw/DailyFinancialNews/analyst_ratings_processed.csv` | ~1.4M | Build price-model dataset and evaluate next-day excess return prediction |
 
 ---
 
@@ -98,11 +94,15 @@ financial-sentiment-analysis/
 │   ├── preprocess.py           # PhraseBank cleaning
 │   ├── align_market.py         # news filtering, same-day price alignment
 │   ├── build_price_dataset.py  # forward labels, features, FinBERT probs + CLS
+│   ├── headline_filter.py      # company-relevance filter (v2)
+│   ├── price_features.py       # shared market feature computation
+│   ├── price_model_utils.py    # v2 splits, ablations, threshold tuning
 │   ├── finbert_inference.py    # shared FinBERT inference helpers
 │   ├── price_constants.py      # Stage 2 feature column definitions
 │   ├── train_baseline.py       # TF-IDF + Naive Bayes + SVM
-│   ├── train_finbert.py        # FinBERT fine-tuning (Stage 1)
-│   ├── train_price_model.py    # calibrated LogReg (Stage 2)
+│   ├── train_finbert.py        # FinBERT fine-tuning (Stage 1A)
+│   ├── train_finbert_news.py   # news multi-task FinBERT (Stage 1B)
+│   ├── train_price_model.py    # Stage 2 v1 LogReg / v2 LightGBM
 │   ├── inference.py            # Stage 1 + Stage 2 demo inference
 │   └── evaluate.py             # sentiment and price-direction metrics
 │
@@ -233,6 +233,23 @@ For each row with event trading date `t` and ticker `stock`:
 
 **Output:** `data/processed/price_model_dataset.parquet` (~16k rows after filtering)
 
+### 4.7 Pipeline v2 extensions
+
+**Company filter:** [`src/headline_filter.py`](src/headline_filter.py) keeps headlines mentioning the ticker or alias from [`config/ticker_aliases.yaml`](config/ticker_aliases.yaml) (~47% of aligned rows retained).
+
+**Primary label (v2):** `excess_forward_return = stock_forward_return - spy_forward_return`; flat band **0.3%** on `|excess|`.
+
+**Expanded features:** `stock_excess_return_1d/5d`, `realized_vol_20d`, `intraday_return`, `gap_return`.
+
+**Dual datasets:**
+
+| Variant | FinBERT checkpoint | Output |
+|---------|------------------|--------|
+| phrasebank | `models/finbert_finetuned/` | `price_model_dataset_v2_phrasebank.parquet` |
+| news | `models/finbert_news_adapted/` | `price_model_dataset_v2_news.parquet` |
+
+Build: `python src/build_price_dataset.py --version v2 --finbert-variant {phrasebank|news}` (~6.3k rows each after filter).
+
 ---
 
 ## 5. Phase 2 — Modeling
@@ -293,6 +310,35 @@ For each row with event trading date `t` and ticker `stock`:
 
 Training does **not** retrain FinBERT — Stage 1 is frozen; only Stage 2 weights are learned.
 
+### 5.4 Stage 1B — News-adapted FinBERT (`src/train_finbert_news.py`)
+
+Multi-task fine-tune from PhraseBank checkpoint on filtered news (train ≤ 2019):
+
+- **Direction loss:** excess Up/Down (weight 1.0)
+- **Sentiment distillation:** KL to PhraseBank teacher probs (weight 0.5)
+
+Exports 3-class sentiment checkpoint to `models/finbert_news_adapted/`.
+
+### 5.5 Stage 2 v2 — LightGBM ablations (`src/train_price_model.py --version v2`)
+
+**Temporal split:**
+
+| Set | Dates | Purpose |
+|-----|-------|---------|
+| Train | ≤ 2019-09-30 | Fit model |
+| Validation | 2019-10-01 – 2019-12-31 | MCC threshold tuning |
+| Test | ≥ 2020-01-01 | Held-out eval |
+
+**Ablations (per FinBERT variant):** `sentiment_only`, `market_only`, `sentiment_market`, `full_fusion`
+
+**Estimator:** `LightGBM` + `CalibratedClassifierCV(isotonic)`; PCA(**64**) on CLS for fusion configs.
+
+**Threshold:** MCC-optimal on validation (saved in `pipeline.pkl`).
+
+**Artifacts:** `models/price_direction_v2/{variant}_{ablation}/` + `best_model.json`
+
+**Reference result:** Best val MCC **0.137** (`news_full_fusion`); 2020 test MCC remains weak (~−0.06) due to regime shift — see `metrics_module3_v2.json` subset metrics.
+
 ---
 
 ## 6. Phase 3 — Sentiment Evaluation (`src/evaluate.py --module sentiment`)
@@ -313,37 +359,30 @@ FinBERT is the Stage 1 production model for both the demo and the price pipeline
 
 ---
 
-## 7. Phase 4 — Price Direction Evaluation (`src/evaluate.py --module market`)
+## 7. Phase 4 — Price Direction Evaluation
 
-Evaluate Stage 2 on the **temporal test set (2020)** only.
+### v1 (`python src/evaluate.py --module market`)
 
-### Primary model (Stage 2 calibrated fusion)
+See `evaluation/metrics_module3.json` — raw next-day return direction.
 
-- Accuracy, MCC, precision/recall/F1 (Up and Down)
-- Confusion matrix (Up/Down)
-- **Brier score** and calibration curve for P(Up)
-- Mean confidence on correct vs incorrect predictions
+### v2 (`python src/evaluate.py --module market --version v2`)
 
-### Baselines (same test set)
+**Target:** excess return vs SPY on **company-filtered** headlines (2020 test, ~1.4k rows).
 
-| Baseline | Rule |
-|----------|------|
-| `always_up` | Predict Up every time |
-| `momentum` | Predict Up if `stock_return_1d > 0`, else Down |
-| `sentiment_only` | LogisticRegression on **prob_negative/neutral/positive only** |
+**Reports:** optimal vs default threshold, all ablation MCCs, baselines (`always_up`, `momentum_excess`, `sentiment_only`), subset metrics (relevant-only, large moves, non-neutral).
 
 **Outputs:**
 
-- `evaluation/metrics_module3.json`
-- `evaluation/figures/confusion_matrix_price_model.png`
-- `evaluation/figures/calibration_curve.png`
+- `evaluation/metrics_module3_v2.json`
+- `evaluation/figures/confusion_matrix_price_model_v2.png`
+- `evaluation/figures/calibration_curve_v2.png`
+- `evaluation/figures/ablation_comparison.png`
 
 ### Limitations
 
-- Predicts **next-day close vs event-day close**, not intraday or causal impact
-- Features include same-day returns → correlational, not a trading system
-- Calibrated confidence reflects **historical test-period reliability**, not guaranteed future performance
-- Headline–ticker mismatch (macro news tagged to a single stock) adds noise
+- Predicts **next-day excess return vs SPY**, not intraday or causal impact
+- 2020 test period (COVID) differs from 2019 validation — expect val/test gap
+- Company filter reduces macro headline noise but also reduces sample size
 
 ---
 
@@ -351,16 +390,16 @@ Evaluate Stage 2 on the **temporal test set (2020)** only.
 
 **Framework:** Streamlit
 
-**Models loaded:** Fine-tuned FinBERT (Stage 1) + calibrated price pipeline (Stage 2)
+**Models loaded:** FinBERT (Stage 1) + v2 best LightGBM pipeline from `models/price_direction_v2/best_model.json`
 
 **UI workflow:**
 
 1. Text area for headline input + **Analyze** button
 2. **Ticker select** (top 19) and **trading date** (2018–2020 range)
 3. **Stage 1:** sentiment label + probability bars
-4. **Stage 2:** predicted next-day direction (`Up`/`Down`), `P(Up)`, `P(Down)`, **confidence** = `max(P(Up), P(Down))`
+4. **Stage 2:** predicted **excess return direction vs SPY** (`Up`/`Down`), `P(Up)`, `P(Down)`, confidence
 5. Low-confidence warning if confidence < 0.55
-6. Sidebar: ground-truth lookup from `price_model_dataset.parquet` when available
+6. Sidebar: excess return ground truth from v2 phrasebank dataset when available
 
 **Run:**
 
@@ -368,57 +407,70 @@ Evaluate Stage 2 on the **temporal test set (2020)** only.
 streamlit run app/app.py
 ```
 
-### Demo test cases
+### Demo test cases (v2 pipeline)
 
-Use these after starting the demo. Set **ticker** and **date** in the sidebar, paste the headline, click **Analyze**. Check Stage 1 first, then Stage 2, then sidebar ground truth when available. Probabilities may vary slightly (±2%) by environment; directions and labels should match.
+Use these with the Streamlit demo after v2 retrain. Set **ticker** and **date** in the sidebar, paste the headline, click **Analyze**. Sidebar ground truth comes from `price_model_dataset_v2_phrasebank.parquet` (excess return vs SPY).
 
-**How Stage 2 behaves:** On the 2020 test set the price model averages ~52% confidence and is biased toward **Up**. A low-confidence warning (< 55%) on most inputs is **expected**, not a bug.
+**v2 notes:**
+- Stage 2 predicts **excess return vs SPY** (beat market / underperform), not raw price direction.
+- Stage 1 inference uses **news-adapted FinBERT** when best model is `news_full_fusion`.
+- Decision threshold is **~0.425** (MCC-tuned on 2019 Q4) — many outputs are **Down** when P(Up) < 42.5%.
+- Headlines should mention the **company or ticker** to match training (company filter).
 
-#### Part A — Stage 1 sanity checks (clear sentiment)
+#### Part A — Stage 1 sanity checks (news-style, company-relevant)
 
-Write headlines like real financial news (reported events, not speculative forecasts).
+| # | Ticker | Date | Headline | Expected Stage 1 |
+|---|--------|------|----------|------------------|
+| A1 | NVDA | 2020-03-16 | Nvidia shares surge after company reports record datacenter revenue growth | positive (pos ≈ 100%) |
+| A2 | MRK | 2019-05-10 | Merck wins FDA approval for new oncology drug candidate | positive (pos ≈ 100%) |
+| A3 | HD | 2020-04-21 | Home Depot beats earnings estimates and raises outlook for the year | positive (pos ≈ 100%) |
+| A4 | BABA | 2020-06-10 | Alibaba shares plunge on delisting fears and regulatory crackdown concerns | negative (neg ≈ 59%) |
+| A5 | NFLX | 2020-01-15 | Netflix subscriber growth misses analyst expectations in latest quarter | negative (neg ≈ 64%) |
+| A6 | WFC | 2020-02-05 | Wells Fargo faces heavy fines over sales practice violations | negative (neg ≈ 53%) |
+| A7 | JNJ | 2019-08-20 | Johnson and Johnson reaffirms full year guidance unchanged from prior quarter | neutral (neu ≈ 70%) |
 
-| # | Ticker | Date | Headline | Expected Stage 1 | Expected probs (approx.) |
-|---|--------|------|----------|------------------|----------------------------|
-| A1 | NVDA | 2020-03-16 | Nvidia shares surge after company reports record datacenter revenue growth | positive | pos ≈ 99%, neg ≈ 0%, neu ≈ 0% |
-| A2 | MRK | 2019-05-10 | Merck wins FDA approval for new oncology drug candidate | positive | pos ≈ 99% |
-| A3 | HD | 2020-04-21 | Home Depot beats earnings estimates and raises outlook for the year | positive | pos ≈ 99% |
-| A4 | BABA | 2020-06-10 | Alibaba shares plunge on delisting fears and regulatory crackdown concerns | negative | neg ≈ 89%, pos ≈ 0% |
-| A5 | NFLX | 2020-01-15 | Netflix subscriber growth misses analyst expectations in latest quarter | negative | neg ≈ 89% |
-| A6 | WFC | 2020-02-05 | Wells Fargo faces heavy fines over sales practice violations | negative | neg ≈ 73%, neu ≈ 25% |
-| A7 | JNJ | 2019-08-20 | The company will hold its annual shareholder meeting next month | neutral | neu ≈ 99% |
+#### Part B — Stage 2 behavior (excess return; sentiment ≠ direction)
 
-#### Part B — Stage 2 behavior (low confidence is normal)
+Most v2 outputs land near **50–53% confidence** with **Down** predicted. Positive sentiment does **not** imply excess Up.
 
 | # | Ticker | Date | Headline | Expected Stage 2 |
 |---|--------|------|----------|------------------|
-| B1 | NVDA | 2020-03-16 | (A1 headline) | Up, conf ≈ 53%, low-confidence warning |
-| B2 | BABA | 2020-06-10 | (A4 headline) | Up, conf ≈ 51%, low-confidence warning |
-| B3 | KO | 2019-11-08 | Coca Cola reports steady quarterly sales in line with expectations | Down, conf ≈ 51%, low-confidence warning |
+| B1 | NVDA | 2020-03-16 | (A1 headline) | Down, P(Up) ≈ 50%, conf ≈ 50%, warning |
+| B2 | BABA | 2020-06-10 | (A4 headline) | Down, P(Up) ≈ 47%, conf ≈ 53%, warning |
+| B3 | MRK | 2019-05-10 | (A2 headline) | Down, P(Up) ≈ 47%, conf ≈ 53%, warning |
+| B4 | NFLX | 2019-07-18 | Large Option Trades Hint At How Institutions Are Playing The Netflix Dip | Down, P(Up) ≈ 26%, **conf ≈ 74%** |
 
-Even strong negative sentiment (B2) does not produce high-confidence price predictions.
+B4 shows the model can be confident — but about **underperforming SPY**, even on a positive headline.
 
-#### Part C — Real cached headlines (sidebar ground truth)
+#### Part C — Real cached headlines (sidebar excess ground truth)
 
-Paste these **exact** headlines to compare predictions with actual next-day outcomes in the sidebar.
+Paste **exact** headlines; sidebar shows `excess_forward_return` and excess direction.
 
-| # | Ticker | Date | Headline (paste exactly) | Expected Stage 1 | Actual next day (sidebar) | Stage 2 (approx.) |
-|---|--------|------|---------------------------|------------------|---------------------------|-------------------|
-| C1 | BABA | 2020-06-10 | How Delisting Chinese Stocks Could Hurt Wall Street | negative (neg ≈ 82%) | Down (−3.8%) | Up ~51% |
-| C2 | NVDA | 2020-02-20 | Shares of several semiconductor companies are trading lower potentially on coronavirus fears | negative (neg ≈ 54%, neu ≈ 45%) | Down (−4.7%) | Up ~51% |
-| C3 | NFLX | 2019-07-18 | 'Lion King' Release Might Be A Good Time To Look At Disney's Stock | positive (pos ≈ 94%) | Down (−3.1%) | Up ~51% |
+| # | Ticker | Date | Headline (paste exactly) | Expected Stage 1 | Actual excess (sidebar) | Stage 2 (approx.) |
+|---|--------|------|---------------------------|------------------|-------------------------|-------------------|
+| C1 | BABA | 2020-06-09 | Alibaba To Add 5,000 Workers To Its Cloud Division As It Plans $28B Investment | positive | **Up** (+1.9%) | Down ~50% |
+| C2 | NVDA | 2020-05-28 | Synopsys' Silicon-Proven DesignWare DDR IP for High-Performance Cloud Computing Networking Chips Selected by NVIDIA | neutral | **Up** (+4.1%) | Down ~50% |
+| C3 | MRK | 2020-06-10 | The Daily Biotech Pulse: Keytruda Setback For Merck, Denali Pulls The Plug On Neurological Asset | positive | **Up** (+0.4%) | Down ~53% |
+| C4 | NFLX | 2019-07-18 | Large Option Trades Hint At How Institutions Are Playing The Netflix Dip | positive | **Down** (−2.6%) | Down ~74% conf |
 
-These cases show that **sentiment ≠ next-day price**. Macro or mismatched headlines (C3) add noise.
+C1–C3: model predicts Down while actual excess was Up (2020 generalization gap). C4: confident Down and **correct**.
 
-#### Part D — Gotcha cases (what not to expect)
+#### Part D — Gotcha cases
 
 | # | Ticker | Date | Headline | What happens | Lesson |
 |---|--------|------|----------|--------------|--------|
-| D1 | BABA | 2020-06-10 | BABA stock price is determined to rise in the upcoming days as a result of the Chinese government's new policies | neutral (~61%), not positive | Speculative / forecast wording → neutral |
-| D2 | BABA | 2020-06-10 | Alibaba shares surge on new Chinese government policies | positive (~99%) | Same idea, news-style phrasing → positive |
-| D3 | Any | Any | Very bullish custom headline | Stage 2 still ~51–53% conf | Stage 2 does not mirror human certainty |
+| D1 | BABA | 2020-06-10 | How Delisting Chinese Stocks Could Hurt Wall Street | **Not in v2 dataset** (no BABA/Alibaba in text) — sidebar likely empty | v2 trains on company-relevant headlines only |
+| D2 | BABA | 2020-06-10 | BABA stock price is determined to rise in the upcoming days | S1 positive (~56% pos), S2 Down ~52% | Forecast wording; weak excess signal |
+| D3 | BABA | 2020-06-10 | Alibaba shares surge on supportive Chinese tech policies | S1 positive (~100%), S2 Down ~53% | Bullish tone ≠ beat SPY tomorrow |
+| D4 | BABA | 2020-06-10 | Chinese government announces supportive policies for tech sector | S1 positive, **no company name** | Macro headline — poor fit for single-ticker v2 |
 
-Compare **D1 vs D2** side-by-side: same story, different wording.
+#### Suggested 5-minute v2 demo flow
+
+1. **A1** — strong positive sentiment
+2. **B1** — same headline, Stage 2 Down at ~50% (sentiment ≠ excess)
+3. **C4** — cached headline where confident Down matches sidebar
+4. **D1 vs D3** — macro vs company-relevant contrast
+5. **B4** — high-confidence Down on positive Netflix headline
 
 ---
 
@@ -510,9 +562,24 @@ python src/train_price_model.py     # Stage 2
 python src/evaluate.py --module sentiment
 
 # Phase 4 — Price direction evaluation
-python src/evaluate.py --module market
+python src/evaluate.py --module market          # v1
+python src/evaluate.py --module market --version v2
 
 # Phase 5 — Demo
+streamlit run app/app.py
+```
+
+### v2 full retrain (recommended)
+
+```bash
+python src/preprocess.py
+python src/align_market.py
+python src/train_finbert.py                     # Stage 1A (skip if checkpoint exists)
+python src/train_finbert_news.py              # Stage 1B (~30 min CPU)
+python src/build_price_dataset.py --version v2 --finbert-variant phrasebank
+python src/build_price_dataset.py --version v2 --finbert-variant news
+python src/train_price_model.py --version v2
+python src/evaluate.py --module market --version v2
 streamlit run app/app.py
 ```
 

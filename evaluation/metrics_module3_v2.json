@@ -1,0 +1,676 @@
+{
+    "version": "v2",
+    "label_mode": "excess_1d",
+    "test_sample_size": 1436,
+    "best_model": {
+        "model_id": "news_sentiment_market",
+        "pipeline_path": "models/price_direction_v2/news_sentiment_market/pipeline.pkl",
+        "finbert_variant": "news",
+        "ablation": "sentiment_market",
+        "val_mcc": 0.16258417585889806,
+        "optimal_threshold": 0.595
+    },
+    "stage2_best_optimal_threshold": {
+        "accuracy": 0.5306406685236769,
+        "matthews_correlation_coefficient": -0.0435204641945506,
+        "brier_score": 0.2554258241481606,
+        "mean_confidence": 0.5287583968350883,
+        "mean_confidence_correct": 0.5271618648718458,
+        "mean_confidence_incorrect": 0.5305633780754306,
+        "per_class": {
+            "Down": {
+                "precision": 0.5380710659898477,
+                "recall": 0.9525032092426188,
+                "f1_score": 0.6876737720111215,
+                "support": 779
+            },
+            "Up": {
+                "precision": 0.3508771929824561,
+                "recall": 0.030441400304414,
+                "f1_score": 0.056022408963585436,
+                "support": 657
+            }
+        },
+        "confusion_matrix": {
+            "labels": [
+                "Down",
+                "Up"
+            ],
+            "matrix": [
+                [
+                    742,
+                    37
+                ],
+                [
+                    637,
+                    20
+                ]
+            ]
+        }
+    },
+    "stage2_best_default_threshold": {
+        "accuracy": 0.46448467966573814,
+        "matthews_correlation_coefficient": -0.0634984206694373,
+        "brier_score": 0.2554258241481606,
+        "mean_confidence": 0.5287583968350883,
+        "mean_confidence_correct": 0.5270577513540536,
+        "mean_confidence_incorrect": 0.5302334690533588,
+        "per_class": {
+            "Down": {
+                "precision": 0.5076923076923077,
+                "recall": 0.42362002567394097,
+                "f1_score": 0.46186144156752973,
+                "support": 779
+            },
+            "Up": {
+                "precision": 0.4287531806615776,
+                "recall": 0.512937595129376,
+                "f1_score": 0.4670824670824671,
+                "support": 657
+            }
+        },
+        "confusion_matrix": {
+            "labels": [
+                "Down",
+                "Up"
+            ],
+            "matrix": [
+                [
+                    330,
+                    449
+                ],
+                [
+                    320,
+                    337
+                ]
+            ]
+        }
+    },
+    "all_ablation_test_mcc": {
+        "phrasebank_sentiment_only": 0.044216124008417804,
+        "phrasebank_market_only": -0.14320616892549126,
+        "phrasebank_sentiment_market": -0.02439696605171489,
+        "phrasebank_full_fusion": -0.04806307240047008,
+        "news_sentiment_only": -0.0068248611310847895,
+        "news_market_only": -0.14320616892549126,
+        "news_sentiment_market": -0.0435204641945506,
+        "news_full_fusion": -0.08845192421947169
+    },
+    "all_ablation_test_metrics": {
+        "phrasebank_sentiment_only": {
+            "accuracy": 0.46309192200557103,
+            "matthews_correlation_coefficient": 0.044216124008417804,
+            "brier_score": 0.24967595980180812,
+            "mean_confidence": 0.5106051793650549,
+            "mean_confidence_correct": 0.5110628411960556,
+            "mean_confidence_incorrect": 0.510210438615878,
+            "per_class": {
+                "Down": {
+                    "precision": 0.75,
+                    "recall": 0.01540436456996149,
+                    "f1_score": 0.03018867924528302,
+                    "support": 779
+                },
+                "Up": {
+                    "precision": 0.45985915492957746,
+                    "recall": 0.9939117199391172,
+                    "f1_score": 0.6287915262397689,
+                    "support": 657
+                }
+            },
+            "confusion_matrix": {
+                "labels": [
+                    "Down",
+                    "Up"
+                ],
+                "matrix": [
+                    [
+                        12,
+                        767
+                    ],
+                    [
+                        4,
+                        653
+                    ]
+                ]
+            }
+        },
+        "phrasebank_market_only": {
+            "accuracy": 0.5013927576601671,
+            "matthews_correlation_coefficient": -0.14320616892549126,
+            "brier_score": 0.26053525516063497,
+            "mean_confidence": 0.5463809039595315,
+            "mean_confidence_correct": 0.5388369990329155,
+            "mean_confidence_incorrect": 0.553966953606408,
+            "per_class": {
+                "Down": {
+                    "precision": 0.5234899328859061,
+                    "recall": 0.9011553273427471,
+                    "f1_score": 0.6622641509433962,
+                    "support": 779
+                },
+                "Up": {
+                    "precision": 0.18947368421052632,
+                    "recall": 0.0273972602739726,
+                    "f1_score": 0.047872340425531915,
+                    "support": 657
+                }
+            },
+            "confusion_matrix": {
+                "labels": [
+                    "Down",
+                    "Up"
+                ],
+                "matrix": [
+                    [
+                        702,
+                        77
+                    ],
+                    [
+                        639,
+                        18
+                    ]
+                ]
+            }
+        },
+        "phrasebank_sentiment_market": {
+            "accuracy": 0.4561281337047354,
+            "matthews_correlation_coefficient": -0.02439696605171489,
+            "brier_score": 0.25820876758848066,
+            "mean_confidence": 0.5333945137283899,
+            "mean_confidence_correct": 0.5301289750197736,
+            "mean_confidence_incorrect": 0.536133217766986,
+            "per_class": {
+                "Down": {
+                    "precision": 0.48214285714285715,
+                    "recall": 0.03465982028241335,
+                    "f1_score": 0.06467065868263473,
+                    "support": 779
+                },
+                "Up": {
+                    "precision": 0.45507246376811594,
+                    "recall": 0.9558599695585996,
+                    "f1_score": 0.616593028964163,
+                    "support": 657
+                }
+            },
+            "confusion_matrix": {
+                "labels": [
+                    "Down",
+                    "Up"
+                ],
+                "matrix": [
+                    [
+                        27,
+                        752
+                    ],
+                    [
+                        29,
+                        628
+                    ]
+                ]
+            }
+        },
+        "phrasebank_full_fusion": {
+            "accuracy": 0.5243732590529248,
+            "matthews_correlation_coefficient": -0.04806307240047008,
+            "brier_score": 0.2578049282594008,
+            "mean_confidence": 0.5301670027595061,
+            "mean_confidence_correct": 0.5262361369895423,
+            "mean_confidence_incorrect": 0.5345007391061867,
+            "per_class": {
+                "Down": {
+                    "precision": 0.5359281437125748,
+                    "recall": 0.9191270860077022,
+                    "f1_score": 0.6770685579196217,
+                    "support": 779
+                },
+                "Up": {
+                    "precision": 0.37,
+                    "recall": 0.0563165905631659,
+                    "f1_score": 0.0977542932628798,
+                    "support": 657
+                }
+            },
+            "confusion_matrix": {
+                "labels": [
+                    "Down",
+                    "Up"
+                ],
+                "matrix": [
+                    [
+                        716,
+                        63
+                    ],
+                    [
+                        620,
+                        37
+                    ]
+                ]
+            }
+        },
+        "news_sentiment_only": {
+            "accuracy": 0.541782729805014,
+            "matthews_correlation_coefficient": -0.0068248611310847895,
+            "brier_score": 0.24970534537365954,
+            "mean_confidence": 0.5133227606138935,
+            "mean_confidence_correct": 0.5139401086603153,
+            "mean_confidence_incorrect": 0.5125928262976075,
+            "per_class": {
+                "Down": {
+                    "precision": 0.5422781271837875,
+                    "recall": 0.9961489088575096,
+                    "f1_score": 0.702262443438914,
+                    "support": 779
+                },
+                "Up": {
+                    "precision": 0.4,
+                    "recall": 0.0030441400304414,
+                    "f1_score": 0.006042296072507553,
+                    "support": 657
+                }
+            },
+            "confusion_matrix": {
+                "labels": [
+                    "Down",
+                    "Up"
+                ],
+                "matrix": [
+                    [
+                        776,
+                        3
+                    ],
+                    [
+                        655,
+                        2
+                    ]
+                ]
+            }
+        },
+        "news_market_only": {
+            "accuracy": 0.5013927576601671,
+            "matthews_correlation_coefficient": -0.14320616892549126,
+            "brier_score": 0.26053525516063497,
+            "mean_confidence": 0.5463809039595315,
+            "mean_confidence_correct": 0.5388369990329155,
+            "mean_confidence_incorrect": 0.553966953606408,
+            "per_class": {
+                "Down": {
+                    "precision": 0.5234899328859061,
+                    "recall": 0.9011553273427471,
+                    "f1_score": 0.6622641509433962,
+                    "support": 779
+                },
+                "Up": {
+                    "precision": 0.18947368421052632,
+                    "recall": 0.0273972602739726,
+                    "f1_score": 0.047872340425531915,
+                    "support": 657
+                }
+            },
+            "confusion_matrix": {
+                "labels": [
+                    "Down",
+                    "Up"
+                ],
+                "matrix": [
+                    [
+                        702,
+                        77
+                    ],
+                    [
+                        639,
+                        18
+                    ]
+                ]
+            }
+        },
+        "news_sentiment_market": {
+            "accuracy": 0.5306406685236769,
+            "matthews_correlation_coefficient": -0.0435204641945506,
+            "brier_score": 0.2554258241481606,
+            "mean_confidence": 0.5287583968350883,
+            "mean_confidence_correct": 0.5271618648718458,
+            "mean_confidence_incorrect": 0.5305633780754306,
+            "per_class": {
+                "Down": {
+                    "precision": 0.5380710659898477,
+                    "recall": 0.9525032092426188,
+                    "f1_score": 0.6876737720111215,
+                    "support": 779
+                },
+                "Up": {
+                    "precision": 0.3508771929824561,
+                    "recall": 0.030441400304414,
+                    "f1_score": 0.056022408963585436,
+                    "support": 657
+                }
+            },
+            "confusion_matrix": {
+                "labels": [
+                    "Down",
+                    "Up"
+                ],
+                "matrix": [
+                    [
+                        742,
+                        37
+                    ],
+                    [
+                        637,
+                        20
+                    ]
+                ]
+            }
+        },
+        "news_full_fusion": {
+            "accuracy": 0.5111420612813371,
+            "matthews_correlation_coefficient": -0.08845192421947169,
+            "brier_score": 0.25684880065044335,
+            "mean_confidence": 0.5311701014220592,
+            "mean_confidence_correct": 0.5271006111489508,
+            "mean_confidence_incorrect": 0.5354250955252807,
+            "per_class": {
+                "Down": {
+                    "precision": 0.5292331055429005,
+                    "recall": 0.8947368421052632,
+                    "f1_score": 0.6650763358778626,
+                    "support": 779
+                },
+                "Up": {
+                    "precision": 0.31092436974789917,
+                    "recall": 0.0563165905631659,
+                    "f1_score": 0.09536082474226804,
+                    "support": 657
+                }
+            },
+            "confusion_matrix": {
+                "labels": [
+                    "Down",
+                    "Up"
+                ],
+                "matrix": [
+                    [
+                        697,
+                        82
+                    ],
+                    [
+                        620,
+                        37
+                    ]
+                ]
+            }
+        }
+    },
+    "baselines": {
+        "always_up": {
+            "accuracy": 0.4575208913649025,
+            "matthews_correlation_coefficient": 0.0,
+            "brier_score": 0.5424791086350975,
+            "mean_confidence": 1.0,
+            "mean_confidence_correct": 1.0,
+            "mean_confidence_incorrect": 1.0,
+            "per_class": {
+                "Down": {
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1_score": 0.0,
+                    "support": 779
+                },
+                "Up": {
+                    "precision": 0.4575208913649025,
+                    "recall": 1.0,
+                    "f1_score": 0.6278069756330625,
+                    "support": 657
+                }
+            },
+            "confusion_matrix": {
+                "labels": [
+                    "Down",
+                    "Up"
+                ],
+                "matrix": [
+                    [
+                        0,
+                        779
+                    ],
+                    [
+                        0,
+                        657
+                    ]
+                ]
+            }
+        },
+        "momentum_excess": {
+            "accuracy": 0.5174094707520891,
+            "matthews_correlation_coefficient": 0.039757252352641284,
+            "brier_score": 0.48259052924791085,
+            "mean_confidence": 1.0,
+            "mean_confidence_correct": 1.0,
+            "mean_confidence_incorrect": 1.0,
+            "per_class": {
+                "Down": {
+                    "precision": 0.5634218289085545,
+                    "recall": 0.49037227214377405,
+                    "f1_score": 0.5243651338366506,
+                    "support": 779
+                },
+                "Up": {
+                    "precision": 0.4762532981530343,
+                    "recall": 0.5494672754946728,
+                    "f1_score": 0.5102473498233215,
+                    "support": 657
+                }
+            },
+            "confusion_matrix": {
+                "labels": [
+                    "Down",
+                    "Up"
+                ],
+                "matrix": [
+                    [
+                        382,
+                        397
+                    ],
+                    [
+                        296,
+                        361
+                    ]
+                ]
+            }
+        },
+        "sentiment_only": {
+            "accuracy": 0.49930362116991645,
+            "matthews_correlation_coefficient": -0.007832796092044375,
+            "brier_score": 0.25011956479998676,
+            "mean_confidence": 0.5089971681450294,
+            "mean_confidence_correct": 0.5089812020539272,
+            "mean_confidence_incorrect": 0.5090130898241954,
+            "per_class": {
+                "Down": {
+                    "precision": 0.538860103626943,
+                    "recall": 0.5340179717586649,
+                    "f1_score": 0.536428110896196,
+                    "support": 779
+                },
+                "Up": {
+                    "precision": 0.45331325301204817,
+                    "recall": 0.4581430745814307,
+                    "f1_score": 0.45571536714610145,
+                    "support": 657
+                }
+            },
+            "confusion_matrix": {
+                "labels": [
+                    "Down",
+                    "Up"
+                ],
+                "matrix": [
+                    [
+                        416,
+                        363
+                    ],
+                    [
+                        356,
+                        301
+                    ]
+                ]
+            }
+        }
+    },
+    "subsets": {
+        "all_rows": {
+            "accuracy": 0.5306406685236769,
+            "matthews_correlation_coefficient": -0.0435204641945506,
+            "brier_score": 0.2554258241481606,
+            "mean_confidence": 0.5287583968350883,
+            "mean_confidence_correct": 0.5271618648718458,
+            "mean_confidence_incorrect": 0.5305633780754306,
+            "per_class": {
+                "Down": {
+                    "precision": 0.5380710659898477,
+                    "recall": 0.9525032092426188,
+                    "f1_score": 0.6876737720111215,
+                    "support": 779
+                },
+                "Up": {
+                    "precision": 0.3508771929824561,
+                    "recall": 0.030441400304414,
+                    "f1_score": 0.056022408963585436,
+                    "support": 657
+                }
+            },
+            "confusion_matrix": {
+                "labels": [
+                    "Down",
+                    "Up"
+                ],
+                "matrix": [
+                    [
+                        742,
+                        37
+                    ],
+                    [
+                        637,
+                        20
+                    ]
+                ]
+            }
+        },
+        "headline_relevant": {
+            "accuracy": 0.5306406685236769,
+            "matthews_correlation_coefficient": -0.0435204641945506,
+            "brier_score": 0.2554258241481606,
+            "mean_confidence": 0.5287583968350883,
+            "mean_confidence_correct": 0.5271618648718458,
+            "mean_confidence_incorrect": 0.5305633780754306,
+            "per_class": {
+                "Down": {
+                    "precision": 0.5380710659898477,
+                    "recall": 0.9525032092426188,
+                    "f1_score": 0.6876737720111215,
+                    "support": 779
+                },
+                "Up": {
+                    "precision": 0.3508771929824561,
+                    "recall": 0.030441400304414,
+                    "f1_score": 0.056022408963585436,
+                    "support": 657
+                }
+            },
+            "confusion_matrix": {
+                "labels": [
+                    "Down",
+                    "Up"
+                ],
+                "matrix": [
+                    [
+                        742,
+                        37
+                    ],
+                    [
+                        637,
+                        20
+                    ]
+                ]
+            }
+        },
+        "large_excess_move": {
+            "accuracy": 0.517910447761194,
+            "matthews_correlation_coefficient": -0.05138253420526359,
+            "brier_score": 0.2557931923996163,
+            "mean_confidence": 0.5290345321539512,
+            "mean_confidence_correct": 0.5275829054053743,
+            "mean_confidence_incorrect": 0.530594019713568,
+            "per_class": {
+                "Down": {
+                    "precision": 0.5252918287937743,
+                    "recall": 0.9493670886075949,
+                    "f1_score": 0.6763527054108216,
+                    "support": 711
+                },
+                "Up": {
+                    "precision": 0.34545454545454546,
+                    "recall": 0.030206677265500796,
+                    "f1_score": 0.05555555555555555,
+                    "support": 629
+                }
+            },
+            "confusion_matrix": {
+                "labels": [
+                    "Down",
+                    "Up"
+                ],
+                "matrix": [
+                    [
+                        675,
+                        36
+                    ],
+                    [
+                        610,
+                        19
+                    ]
+                ]
+            }
+        },
+        "non_neutral_sentiment": {
+            "accuracy": 0.5308641975308642,
+            "matthews_correlation_coefficient": -0.05181030020755276,
+            "brier_score": 0.2551460773938892,
+            "mean_confidence": 0.5297267435380334,
+            "mean_confidence_correct": 0.5278463694235008,
+            "mean_confidence_incorrect": 0.531854535299215,
+            "per_class": {
+                "Down": {
+                    "precision": 0.5397849462365591,
+                    "recall": 0.9471698113207547,
+                    "f1_score": 0.6876712328767123,
+                    "support": 530
+                },
+                "Up": {
+                    "precision": 0.3333333333333333,
+                    "recall": 0.03167420814479638,
+                    "f1_score": 0.05785123966942149,
+                    "support": 442
+                }
+            },
+            "confusion_matrix": {
+                "labels": [
+                    "Down",
+                    "Up"
+                ],
+                "matrix": [
+                    [
+                        502,
+                        28
+                    ],
+                    [
+                        428,
+                        14
+                    ]
+                ]
+            }
+        }
+    },
+    "limitation": "Predicts next-day excess return (stock minus SPY) direction using filtered company-relevant headlines, FinBERT outputs, and market context."
+}

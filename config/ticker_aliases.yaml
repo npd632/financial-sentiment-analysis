@@ -1,0 +1,46 @@
+# Ticker aliases for company-relevance headline filter (lowercase tokens, word-boundary match)
+MRK:
+  - merck
+MS:
+  - morgan stanley
+  - morgan
+MU:
+  - micron
+NVDA:
+  - nvidia
+QQQ:
+  - nasdaq
+  - qqq
+M:
+  - macys
+  - macy
+EBAY:
+  - ebay
+NFLX:
+  - netflix
+GILD:
+  - gilead
+VZ:
+  - verizon
+DAL:
+  - delta
+JNJ:
+  - johnson
+  - jnj
+QCOM:
+  - qualcomm
+BABA:
+  - alibaba
+  - baba
+KO:
+  - coca cola
+  - coke
+ORCL:
+  - oracle
+FDX:
+  - fedex
+HD:
+  - home depot
+WFC:
+  - wells fargo
+  - wells

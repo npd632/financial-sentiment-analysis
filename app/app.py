@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Streamlit demo: Stage 1 sentiment + Stage 2 next-day price direction with confidence."""
+"""Streamlit demo: Stage 1 sentiment + Stage 2 next-day excess return vs SPY."""
 
 from pathlib import Path
 import sys
@@ -10,15 +10,15 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from inference import load_price_pipeline, predict_price_direction
+from inference import load_best_model_info, load_price_pipeline_v2, predict_price_direction
 from preprocess import load_config
 
 SENTIMENT_EMOJI = {"positive": "🟢", "negative": "🔴", "neutral": "⚪"}
 
 
 @st.cache_resource
-def load_pipeline_cached(model_dir: str):
-    return load_price_pipeline(model_dir)
+def load_pipeline_cached(config_dict: dict):
+    return load_price_pipeline_v2(config_dict)
 
 
 @st.cache_data
@@ -34,7 +34,6 @@ def lookup_forward_row(
     trading_date,
     headline: str | None = None,
 ) -> pd.Series | None:
-    """Find a row in the price model dataset for verification."""
     mask = (dataset["stock"] == ticker) & (dataset["trading_date"] == trading_date)
     if headline:
         mask &= dataset["headline"] == headline
@@ -53,16 +52,16 @@ def main() -> None:
 
     config = load_config(str(ROOT / "config.yaml"))
     data_cfg = config["data"]
-    price_cfg = config["models"]["price_direction"]
+    price_v2_cfg = config["models"]["price_direction_v2"]
+    confidence_threshold = price_v2_cfg["confidence_threshold"]
 
-    pipeline_path = ROOT / price_cfg["save_path"] / "pipeline.pkl"
-    dataset_path = ROOT / data_cfg["price_model_dataset_path"]
-    confidence_threshold = price_cfg["confidence_threshold"]
+    best_model_path = ROOT / price_v2_cfg["save_path"] / "best_model.json"
+    dataset_path = ROOT / data_cfg["price_model_dataset_phrasebank_path"]
 
     st.title("Financial Sentiment & Price Outlook")
     st.caption(
-        "Two-stage system: FinBERT sentiment (Stage 1) + calibrated next-day "
-        "price direction model (Stage 2)."
+        "Two-stage v2: FinBERT sentiment (Stage 1) + calibrated **next-day excess return vs SPY** "
+        "(Stage 2)."
     )
 
     tickers = data_cfg["news_tickers"]
@@ -79,6 +78,21 @@ def main() -> None:
             max_value=price_end,
         )
 
+        if best_model_path.exists():
+            best = load_best_model_info(
+                {
+                    **config,
+                    "models": {
+                        **config["models"],
+                        "price_direction_v2": {
+                            **price_v2_cfg,
+                            "save_path": str(ROOT / price_v2_cfg["save_path"]),
+                        },
+                    },
+                }
+            )
+            st.caption(f"Stage 2 model: `{best['model_id']}`")
+
         if dataset_path.exists():
             dataset = load_price_dataset(str(dataset_path))
             rows = dataset[
@@ -87,18 +101,18 @@ def main() -> None:
             if not rows.empty:
                 st.success(f"{len(rows)} cached headline(s) for {ticker} on {trading_date}")
                 sample = rows.iloc[0]
-                st.metric("Actual next-day return", f"{sample['forward_return']:.4f}")
-                st.metric("Actual forward direction", sample["forward_direction"])
+                st.metric("Actual excess return (next day)", f"{sample['excess_forward_return']:.4f}")
+                st.metric("Actual excess direction", sample["forward_direction"])
             else:
-                st.info("No cached rows for this ticker/date in the evaluation dataset.")
+                st.info("No cached rows for this ticker/date in the v2 dataset.")
         else:
-            st.warning("Run `python src/build_price_dataset.py` to enable ground-truth lookup.")
+            st.warning("Run v2 dataset build to enable ground-truth lookup.")
 
     st.subheader("Headline analysis")
     headline = st.text_area(
         "Enter a financial news headline",
         height=120,
-        placeholder="e.g. Company beats earnings expectations and raises full-year guidance",
+        placeholder="e.g. Nvidia shares surge after company reports record datacenter revenue growth",
     )
 
     if st.button("Analyze", type="primary"):
@@ -106,36 +120,49 @@ def main() -> None:
             st.error("Please enter a headline.")
             return
 
-        if not pipeline_path.exists():
+        if not best_model_path.exists():
             st.error(
-                "Price direction model not found. Run:\n"
-                "`python src/build_price_dataset.py`\n"
-                "`python src/train_price_model.py`"
+                "v2 price model not found. Run:\n"
+                "`python src/train_finbert_news.py`\n"
+                "`python src/build_price_dataset.py --version v2 --finbert-variant phrasebank`\n"
+                "`python src/build_price_dataset.py --version v2 --finbert-variant news`\n"
+                "`python src/train_price_model.py --version v2`"
             )
             return
 
+        runtime_config = {
+            **config,
+            "data": {
+                **data_cfg,
+                "prices_daily_path": str(ROOT / data_cfg["prices_daily_path"]),
+                "spy_prices_path": str(ROOT / data_cfg["spy_prices_path"]),
+            },
+            "models": {
+                **config["models"],
+                "finbert": {
+                    **config["models"]["finbert"],
+                    "save_path": str(ROOT / config["models"]["finbert"]["save_path"]),
+                },
+                "finbert_news": {
+                    **config["models"]["finbert_news"],
+                    "save_path": str(ROOT / config["models"]["finbert_news"]["save_path"]),
+                },
+                "price_direction_v2": {
+                    **price_v2_cfg,
+                    "save_path": str(ROOT / price_v2_cfg["save_path"]),
+                },
+            },
+        }
+
         with st.spinner("Running Stage 1 + Stage 2 inference..."):
-            pipeline = load_pipeline_cached(str(ROOT / price_cfg["save_path"]))
+            pipeline = load_pipeline_cached(runtime_config)
             result = predict_price_direction(
                 headline=headline,
                 ticker=ticker,
                 trading_date=trading_date,
-                config={
-                    **config,
-                    "data": {
-                        **data_cfg,
-                        "prices_daily_path": str(ROOT / data_cfg["prices_daily_path"]),
-                        "spy_prices_path": str(ROOT / data_cfg["spy_prices_path"]),
-                    },
-                    "models": {
-                        **config["models"],
-                        "finbert": {
-                            **config["models"]["finbert"],
-                            "save_path": str(ROOT / config["models"]["finbert"]["save_path"]),
-                        },
-                    },
-                },
+                config=runtime_config,
                 pipeline=pipeline,
+                use_v2=True,
             )
 
         col1, col2 = st.columns(2)
@@ -157,11 +184,11 @@ def main() -> None:
             st.bar_chart(prob_df)
 
         with col2:
-            st.markdown("#### Stage 2 — Next-day price outlook")
+            st.markdown("#### Stage 2 — Next-day excess return vs SPY")
             direction = result["predicted_direction"]
-            st.markdown(f"**Predicted direction: {direction}**")
-            st.metric("P(Up)", f"{result['prob_up']:.2%}")
-            st.metric("P(Down)", f"{result['prob_down']:.2%}")
+            st.markdown(f"**Predicted excess direction: {direction}**")
+            st.metric("P(Up vs SPY)", f"{result['prob_up']:.2%}")
+            st.metric("P(Down vs SPY)", f"{result['prob_down']:.2%}")
             st.metric("Confidence", f"{result['confidence']:.2%}")
 
             if result["confidence"] < confidence_threshold:
@@ -179,14 +206,16 @@ def main() -> None:
             )
             if row is not None:
                 st.info(
-                    f"Ground truth (cached): forward direction **{row['forward_direction']}**, "
-                    f"return **{row['forward_return']:.4f}**"
+                    f"Ground truth (cached): excess direction **{row['forward_direction']}**, "
+                    f"excess return **{row['excess_forward_return']:.4f}**"
                 )
 
         with st.expander("Details"):
             st.write("Cleaned text:", result["cleaned_text"])
             st.json(
                 {
+                    "label_mode": result["label_mode"],
+                    "optimal_threshold": round(result["optimal_threshold"], 4),
                     "sentiment": result["sentiment"],
                     "prob_negative": round(result["prob_negative"], 4),
                     "prob_neutral": round(result["prob_neutral"], 4),

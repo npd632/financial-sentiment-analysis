@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""Build price-model dataset: forward labels, market features, FinBERT probs + CLS embeddings."""
+"""Build price-model dataset (v1 raw return or v2 excess return + company filter)."""
 
+from __future__ import annotations
+
+import argparse
 import logging
 import os
 import sys
@@ -14,7 +17,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data_loader import download_spy, load_prices, load_spy
 from finbert_inference import predict_finbert_with_probs
+from headline_filter import apply_company_filter
 from preprocess import load_config
+from price_constants import (
+    CLS_PREFIX,
+    MARKET_FEATURES,
+    NUM_CLS_DIM,
+    SENTIMENT_FEATURES,
+    TABULAR_FEATURES,
+    cls_column_names,
+)
+from price_features import compute_price_features
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,19 +36,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 EASTERN = "America/New_York"
-TABULAR_FEATURES = [
-    "prob_negative",
-    "prob_neutral",
-    "prob_positive",
-    "stock_return_1d",
-    "stock_return_5d",
-    "spy_return_1d",
-    "volume_zscore_20d",
-    "day_of_week",
-    "hour_of_day",
-]
-CLS_PREFIX = "cls_"
-NUM_CLS_DIM = 768
 
 
 def extract_cls_embeddings(
@@ -70,49 +70,44 @@ def extract_cls_embeddings(
     return np.vstack(embeddings)
 
 
-def compute_price_features(prices: pd.DataFrame, spy: pd.DataFrame) -> pd.DataFrame:
-    """Precompute per (stock, date) return and volume features."""
-    prices = prices.copy()
-    prices["date"] = pd.to_datetime(prices["date"]).dt.normalize()
-    prices = prices.sort_values(["stock", "date"])
-
-    prices["stock_return_1d"] = prices.groupby("stock")["Close"].pct_change()
-    prices["stock_return_5d"] = prices.groupby("stock")["Close"].pct_change(periods=5)
-
-    vol_mean = prices.groupby("stock")["Volume"].transform(
-        lambda s: s.rolling(20, min_periods=5).mean()
-    )
-    vol_std = prices.groupby("stock")["Volume"].transform(
-        lambda s: s.rolling(20, min_periods=5).std()
-    )
-    prices["volume_zscore_20d"] = (prices["Volume"] - vol_mean) / vol_std.replace(0, np.nan)
-
-    prices["close_next"] = prices.groupby("stock")["Close"].shift(-1)
-    prices["forward_return"] = (prices["close_next"] - prices["Close"]) / prices["Close"]
-
-    spy = spy.copy()
-    spy["date"] = pd.to_datetime(spy["date"]).dt.normalize()
-    spy = spy.sort_values("date")
-    spy["spy_return_1d"] = spy["Close"].pct_change()
-    spy_feats = spy[["date", "spy_return_1d"]]
-
-    prices = prices.merge(spy_feats, on="date", how="left")
-    return prices
-
-
-def build_price_dataset(config: dict) -> pd.DataFrame:
-    """Build the Stage 2 training dataset from aligned news and price data."""
+def _resolve_v2_settings(config: dict, finbert_variant: str) -> tuple[dict, str, str]:
     data_cfg = config["data"]
     finbert_cfg = config["models"]["finbert"]
+    news_cfg = config["models"]["finbert_news"]
 
+    if finbert_variant == "phrasebank":
+        model_dir = finbert_cfg["save_path"]
+        output_path = data_cfg["price_model_dataset_phrasebank_path"]
+    elif finbert_variant == "news":
+        model_dir = news_cfg["save_path"]
+        output_path = data_cfg["price_model_dataset_news_path"]
+    else:
+        raise ValueError(f"Unknown finbert variant: {finbert_variant}")
+
+    settings = {
+        "flat_threshold": float(data_cfg["forward_flat_threshold_v2"]),
+        "use_excess": data_cfg.get("forward_label_mode_v2", "excess_1d") == "excess_1d",
+        "company_filter": bool(data_cfg.get("company_filter_enabled_v2", True)),
+        "aliases_path": data_cfg["ticker_aliases_path"],
+    }
+    return settings, model_dir, output_path
+
+
+def build_labeled_frame(config: dict, version: str) -> pd.DataFrame:
+    """Load aligned news, merge price features, apply filters, assign labels."""
+    data_cfg = config["data"]
     aligned_path = data_cfg["aligned_news_prices_path"]
     prices_path = data_cfg["prices_daily_path"]
     spy_path = data_cfg["spy_prices_path"]
-    output_path = data_cfg["price_model_dataset_path"]
-    flat_threshold = float(data_cfg["forward_flat_threshold"])
 
-    if not os.path.exists(aligned_path):
-        raise FileNotFoundError(f"Aligned data not found: {aligned_path}. Run align_market.py first.")
+    if version == "v2":
+        flat_threshold = float(data_cfg["forward_flat_threshold_v2"])
+        use_excess = True
+        company_filter = bool(data_cfg.get("company_filter_enabled_v2", True))
+    else:
+        flat_threshold = float(data_cfg["forward_flat_threshold"])
+        use_excess = False
+        company_filter = False
 
     if not os.path.exists(spy_path):
         download_spy(
@@ -134,9 +129,15 @@ def build_price_dataset(config: dict) -> pd.DataFrame:
         "stock",
         "date",
         "forward_return",
+        "excess_forward_return",
         "stock_return_1d",
         "stock_return_5d",
         "spy_return_1d",
+        "stock_excess_return_1d",
+        "stock_excess_return_5d",
+        "realized_vol_20d",
+        "intraday_return",
+        "gap_return",
         "volume_zscore_20d",
     ]
     df = df.merge(
@@ -146,58 +147,107 @@ def build_price_dataset(config: dict) -> pd.DataFrame:
         how="inner",
     )
 
+    if company_filter:
+        before_filter = len(df)
+        df, _ = apply_company_filter(
+            df, data_cfg["ticker_aliases_path"], text_col="cleaned_text", ticker_col="stock"
+        )
+        df = df[df["headline_relevant"]].copy()
+        logger.info(
+            "Company filter: kept %d / %d rows (%.1f%%)",
+            len(df),
+            before_filter,
+            100.0 * len(df) / max(before_filter, 1),
+        )
+    else:
+        df["headline_relevant"] = True
+
+    label_col = "excess_forward_return" if use_excess else "forward_return"
     before = len(df)
-    df = df[df["forward_return"].notna()].copy()
-    df = df[df["forward_return"].abs() >= flat_threshold].copy()
-    df["forward_direction"] = np.where(df["forward_return"] > 0, "Up", "Down")
+    df = df[df[label_col].notna()].copy()
+    df = df[df[label_col].abs() >= flat_threshold].copy()
+    if not use_excess:
+        df["excess_forward_return"] = df.get("excess_forward_return", 0.0).fillna(0.0)
 
+    df["forward_direction"] = np.where(df[label_col] > 0, "Up", "Down")
     df["day_of_week"] = df["trading_date"].dt.dayofweek
-    df["hour_of_day"] = (
-        df["news_datetime"].dt.tz_convert(EASTERN).dt.hour.astype(int)
-    )
+    df["hour_of_day"] = df["news_datetime"].dt.tz_convert(EASTERN).dt.hour.astype(int)
 
-    for col in ["stock_return_1d", "stock_return_5d", "spy_return_1d", "volume_zscore_20d"]:
+    fill_cols = [c for c in MARKET_FEATURES if c in df.columns]
+    for col in fill_cols:
         df[col] = df[col].fillna(0.0)
 
     logger.info(
-        "Dropped %d rows (missing or flat forward returns); %d remain",
+        "Dropped %d rows (missing or flat %s); %d remain",
         before - len(df),
+        label_col,
         len(df),
     )
+    return df
 
-    model_dir = finbert_cfg["save_path"]
+
+def attach_finbert_features(
+    df: pd.DataFrame,
+    model_dir: str,
+    max_length: int,
+    batch_size: int,
+) -> pd.DataFrame:
     if not os.path.exists(os.path.join(model_dir, "config.json")):
-        raise FileNotFoundError(
-            f"FinBERT model not found at {model_dir}. Run train_finbert.py first."
-        )
+        raise FileNotFoundError(f"FinBERT model not found at {model_dir}.")
 
-    logger.info("Running FinBERT inference for Stage 1 probabilities...")
+    logger.info("Running FinBERT inference from %s", model_dir)
     probs = predict_finbert_with_probs(
         list(df["cleaned_text"]),
         model_dir=model_dir,
-        max_length=finbert_cfg["max_length"],
-        batch_size=finbert_cfg["batch_size"],
+        max_length=max_length,
+        batch_size=batch_size,
     )
     df = pd.concat([df.reset_index(drop=True), probs.reset_index(drop=True)], axis=1)
 
-    logger.info("Extracting FinBERT CLS embeddings...")
+    logger.info("Extracting CLS embeddings...")
     cls_matrix = extract_cls_embeddings(
         list(df["cleaned_text"]),
         model_dir=model_dir,
-        max_length=finbert_cfg["max_length"],
-        batch_size=finbert_cfg["batch_size"],
+        max_length=max_length,
+        batch_size=batch_size,
     )
-    cls_cols = [f"{CLS_PREFIX}{i}" for i in range(NUM_CLS_DIM)]
+    cls_cols = cls_column_names()
     cls_df = pd.DataFrame(cls_matrix, columns=cls_cols)
-    df = pd.concat([df.reset_index(drop=True), cls_df], axis=1)
+    return pd.concat([df.reset_index(drop=True), cls_df], axis=1)
 
+
+def build_price_dataset(
+    config: dict,
+    version: str = "v1",
+    finbert_variant: str = "phrasebank",
+) -> pd.DataFrame:
+    """Build Stage 2 training dataset."""
+    finbert_cfg = config["models"]["finbert"]
+    news_cfg = config["models"]["finbert_news"]
+
+    if version == "v2":
+        _, model_dir, output_path = _resolve_v2_settings(config, finbert_variant)
+        max_length = news_cfg.get("max_length", finbert_cfg["max_length"])
+        batch_size = news_cfg.get("batch_size", finbert_cfg["batch_size"])
+    else:
+        model_dir = finbert_cfg["save_path"]
+        output_path = config["data"]["price_model_dataset_path"]
+        max_length = finbert_cfg["max_length"]
+        batch_size = finbert_cfg["batch_size"]
+
+    df = build_labeled_frame(config, version=version)
+    df = attach_finbert_features(df, model_dir, max_length, batch_size)
+
+    cls_cols = cls_column_names()
     keep_cols = [
         "headline",
         "stock",
         "news_datetime",
         "trading_date",
         "forward_return",
+        "excess_forward_return",
         "forward_direction",
+        "headline_relevant",
         "cleaned_text",
         *TABULAR_FEATURES,
         *cls_cols,
@@ -214,9 +264,23 @@ def build_price_dataset(config: dict) -> pd.DataFrame:
     return df
 
 
-def main(config_path: str = "config.yaml") -> None:
-    config = load_config(config_path)
-    build_price_dataset(config)
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Build price direction dataset.")
+    parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--version", choices=["v1", "v2"], default="v1")
+    parser.add_argument(
+        "--finbert-variant",
+        choices=["phrasebank", "news"],
+        default="phrasebank",
+        help="Required for v2: which Stage-1 checkpoint to use for probs/CLS",
+    )
+    args = parser.parse_args()
+    config = load_config(args.config)
+    build_price_dataset(
+        config,
+        version=args.version,
+        finbert_variant=args.finbert_variant,
+    )
 
 
 if __name__ == "__main__":
